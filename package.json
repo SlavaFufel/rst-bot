@@ -1,0 +1,23 @@
+{
+  "name": "rst-bot",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Telegram bot extending the Rust+ Companion API for a small friend group",
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "pair": "npx @liamcottle/rustplus.js fcm-register",
+    "pair:listen": "npx @liamcottle/rustplus.js fcm-listen",
+    "postinstall": "node scripts/patch-proto.js"
+  },
+  "dependencies": {
+    "@liamcottle/push-receiver": "^0.0.3",
+    "@liamcottle/rustplus.js": "^2.5.0",
+    "dotenv": "^17.4.2",
+    "grammy": "^1.44.0",
+    "jimp": "^0.22.12"
+  }
+}

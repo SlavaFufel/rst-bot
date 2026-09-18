@@ -1,0 +1,5 @@
+# Repo is deployed on Linux — normalize all text to LF to avoid CRLF breaking
+# shell scripts and the systemd unit.
+* text=auto eol=lf
+*.sh text eol=lf
+*.service text eol=lf

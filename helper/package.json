@@ -1,0 +1,28 @@
+{
+  "name": "rst-pair-helper",
+  "version": "0.1.0",
+  "private": true,
+  "description": "One-click Rust+ pairing helper for rst-bot (registers FCM + Steam, uploads to the bot)",
+  "bin": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "build": "pkg . --targets node22-win-x64 --output build/rst-pair.exe"
+  },
+  "dependencies": {
+    "@liamcottle/push-receiver": "^0.0.3",
+    "chrome-launcher": "^0.15.2",
+    "express": "^4.22.2"
+  },
+  "devDependencies": {
+    "@yao-pkg/pkg": "^6.0.0"
+  },
+  "pkg": {
+    "assets": [
+      "src/ingest-url.txt"
+    ],
+    "targets": [
+      "node22-win-x64"
+    ],
+    "outputPath": "build"
+  }
+}

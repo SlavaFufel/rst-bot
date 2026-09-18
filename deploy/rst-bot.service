@@ -1,0 +1,18 @@
+[Unit]
+Description=rst-bot (Rust+ Telegram bot)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/rst
+ExecStart=/usr/bin/node src/index.js
+Restart=always
+RestartSec=5
+# Silence the node:sqlite ExperimentalWarning
+Environment=NODE_OPTIONS=--no-warnings
+# Secrets are loaded by the app from .env in WorkingDirectory (via dotenv).
+
+[Install]
+WantedBy=multi-user.target
