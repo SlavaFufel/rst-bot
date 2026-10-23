@@ -56,13 +56,12 @@ export const config = Object.freeze({
   },
   map: {
     // Render the tactical map PNG (jimp). Memory-heavy — off by default so a 1 GB
-    // box fits more concurrent sessions; /map then lists live markers as text +
-    // a RustMaps link. Set MAP_RENDER=on once you have RAM headroom (≥2 GB).
+    // box fits more concurrent sessions; /map then points to /rustmap.
+    // Set MAP_RENDER=on once you have RAM headroom (≥2 GB).
     render: optional('MAP_RENDER', 'off').toLowerCase() === 'on',
   },
   dbPath: optional('DB_PATH', './data/bot.db'),
   poll: {
-    markersMs: 5_000,
     teamMs: 10_000,
     infoMs: 60_000,
     timeMs: 60_000,

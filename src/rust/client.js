@@ -125,10 +125,6 @@ export class RustClient {
     return this.request('getInfo').then((r) => r.info);
   }
 
-  getMapMarkers() {
-    return this.request('getMapMarkers').then((r) => r.mapMarkers.markers ?? []);
-  }
-
   getTeamInfo() {
     return this.request('getTeamInfo').then((r) => r.teamInfo);
   }

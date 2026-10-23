@@ -1,69 +1,72 @@
 # Rust+ Companion Telegram Bot
 
-A Node.js bot for a small group of players (~10 people on a single server). It expands the functionality of the official Rust+ Companion app by relaying server events to Telegram, bridging team chat with TG, and helping monitor the map.
+A Node.js Telegram bot that extends the official Rust+ Companion app. It keeps a 24/7 Rust+ connection per subscriber, relays team, server and base events to Telegram, bridges team chat both ways, controls smart devices and cameras, and adds raid/craft calculators and player intel. Multi-user: each subscriber pairs their own Steam account, with up to 4 family viewers.
 
-> **Note:** The project is currently a working prototype (skeleton). Connection, server polling, two-way chat, and basic Telegram admin features are fully functional. Advanced features (enemy tracking, smart devices, cameras, markets) are currently placeholders with TODOs in the code.
+> **Rust+ change, 6 Aug 2026:** Facepunch stopped sending map markers over Rust+. Everything built on them was removed from the bot: cargo/heli/CH47/oil rig/Bradley/travelling vendor alerts, vending machine features (`/market`, `/price`, `/deals`, `/pricehistory`, `/watch`) and live markers on `/map`. The old commands still answer with an explanation. Team, time, server info, smart devices, cameras and push notifications are not affected.
 
 ---
 
 ## Tech Stack
 
-* **Node.js** (v18+, ESM)
-* **@liamcottle/rustplus.js** — WebSocket & Protobuf wrapper for Rust+ Companion API
-* **grammY** — Telegram bot framework
-* **better-sqlite3** — Local SQLite database for settings and subscriptions
+* **Node.js** 22.5+ (ESM, built-in `node:sqlite`)
+* **@liamcottle/rustplus.js**: WebSocket and Protobuf wrapper for the Rust+ Companion API
+* **@liamcottle/push-receiver**: FCM listener for in-game "Pair with Server" and smart device pairing pushes
+* **grammY**: Telegram bot framework
+* **jimp**: tactical map rendering (optional, `MAP_RENDER=on`)
 
 ---
 
-## Bot Commands
+## Features
 
-### From Telegram
-* `/start`, `/help`, `/status` — Health check and help info *(Working)*
-* `/subscribe` — Event notification settings *(Working)*
-* `/say [text]` — Send a message to the in-game team chat *(Working)*
-* `/team`, `/online`, `/track` — Team and online status info *(In progress)*
-* `/enemy`, `/raidwindow` — Enemy player and raid tracking *(Placeholder)*
-* `/shop`, `/watch`, `/market` — Vending machine monitoring *(Placeholder)*
-* `/devices`, `/switch`, `/scene`, `/cam` — Smart switches, electronics, and cameras *(Placeholder)*
+### Telegram commands
+* **Server:** `/status`, `/time`, `/subscribe` (notification toggles), `/sub`, `/mirror on|off` (copy alerts to team chat), `/say`, `/promote`, `/teamstats`
+* **Map and recon:** `/map` (team, oil rigs, recent deaths, in-game map notes, your pins), `/rustmap` (RustMaps link), `/pin`, `/deaths`, `/cam`, `/cams`
+* **Raid and RustLabs:** `/raid`, `/durability`, `/craft`, `/recycle`, `/decay`
+* **Players:** `/enemy add|stats|list|remove` (dossier via BattleMetrics and Steam), `/check` (VAC/smurf check), `/track`, `/online`
+* **Base (smart home):** `/devices`, `/switch`, `/storage`, `/allon`, `/alloff`, `/scene`, `/scenes`, `/onraid` (scene applied when a Smart Alarm fires)
+* **Journal:** `/note`, `/notes`, `/delnote`, `/pins`, `/unpin`, `/stats`
+* **Subscription and pairing:** `/redeem`, `/pair`, `/rebind`, `/repair`, `/family`, `/join`, `/leave`
+* **Admin:** `/genkey`, `/keys`, `/revoke`
 
-### From In-Game Team Chat
-*(Parser is ready, command handlers are in progress)*
-* `!cargo`, `!heli`, `!time`, `!pop`, `!help`
+### In-game team chat commands
+`!pop` `!time` `!online` `!team` `!teamstats` `!playtime-all` `!afktime-all` `!deaths` `!promote` `!wipe` `!raid` `!durability` `!craft` `!recycle` `!decay` `!check` `!help`
+
+### Notifications
+Team join/leave/death/respawn/AFK, Smart Alarm (raid alarm), upkeep running out, friends and enemies online, wipe, server down/up, day/night and "night soon".
 
 ---
 
 ## Project Structure
 
 * `src/`
-  * `index.js` — Entry point, module initialization, and setup
-  * `config.js` — Environment variables loading and validation
-  * `logger.js` — Logging utility
-  * `core/`
-    * `eventbus.js` — Internal application event bus
-    * `dedup.js` — Deduplication logic to prevent notification spam
-  * `store/`
-    * `db.js` — SQLite database initialization and schema
-  * `util/`
-    * `grid.js` — Coordinate conversion to map grid (e.g., D7)
+  * `index.js`: entry point, wires sessions, bot, FCM listener, ingest server and scheduler
+  * `config.js`: environment variables
+  * `core/eventbus.js`: event names and subscribable notification types
+  * `access/`: access gate and user settings (language, mirror)
+  * `billing/`: license keys and subscription expiry
+  * `pair/`: pairing codes, FCM listener, ingest endpoint for the `helper/` pairing app
   * `rust/`
-    * `client.js` — Rust+ client wrapper (reconnects, promisified methods)
-    * `poller.js` — Polling loop for map markers, team status, and time
-    * `markers.js` — Map marker parser & diffing (cargo, heli, vending machines)
-    * `chat.js` — Two-way chat bridge between game and Telegram
-  * `telegram/`
-    * `bot.js` — grammY bot setup, whitelist authorization, command handlers
-    * `notifier.js` — Event router to Telegram subscribers
-    * `format.js` — Message formatting templates for Telegram
-  * `tracking/`
-    * `steam.js` — Steam Web API integration for friend tracking
-  * `enemy/` — Enemy tracking logic *(Placeholder)*
-  * `scheduler.js` — Scheduled time events *(Placeholder)*
+    * `client.js`: Rust+ client wrapper (reconnects, promisified requests)
+    * `session.js`, `sessionManager.js`: one live Rust+ connection per subscriber
+    * `poller.js`: polls team, server info and time, emits events, tracks team stats
+    * `chat.js`: two-way team chat bridge
+    * `ingameCommands.js`: `!` commands in team chat
+    * `maprender.js`: tactical map PNG
+  * `devices/`: paired smart devices and scenes
+  * `enemy/`: BattleMetrics, A2S and Steam lookups, enemy store and analytics
+  * `features/`: cameras and journal (notes, pins)
+  * `telegram/`: bot commands, notifier, formatters, `/help`, i18n (RU/EN)
+  * `tracking/steam.js`: Steam friend online tracking
+  * `scheduler.js`: upkeep (decay) monitor
+  * `util/`: grid math, item names, RustLabs data, raid calculator
+* `helper/`: Windows pairing helper (`rst-pair.exe`)
+* `deploy/`: deployment guides (Oracle, GCP, JustHost, Windows PC)
 
 ---
 
 ## Important Notes
 
-1. **Steam Authentication:** The bot sends messages to team chat on behalf of your main Steam account. Messages are prefixed with so teammates know they are automated.
-2. **24/7 Session:** The token stays active continuously without requiring your main client to be online, as long as you remain in the team on the server.
-3. **App Conflict:** Running the official Rust+ mobile app simultaneously using the same account creates a secondary connection. It usually works fine, but may occasionally cause brief disconnects.
-4. **Wipes:** When a server wipes or the team disbands, you must re-join the team in-game and re-pair if necessary (`npm run pair`).
+1. **Steam account:** the bot writes to team chat as the paired Steam account. Messages are prefixed so teammates know they are automated.
+2. **24/7 session:** the token stays valid without the game running, as long as the account stays in the team on the server.
+3. **App conflict:** running the official Rust+ mobile app on the same account can occasionally cause brief disconnects or missed pairing pushes.
+4. **Wipes:** after a wipe or if the team disbands, re-join the team in-game and press "Pair with Server" again. The bot picks it up automatically.

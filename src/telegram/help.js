@@ -14,18 +14,11 @@ const CATS = [
     ['/teamstats', 'статы тимы за вайп _(время/AFK/смерти/дистанция)_', 'team stats this wipe _(playtime/AFK/deaths/distance)_'],
   ] },
   { icon: '🗺️', ru: 'Карта и разведка', en: 'Map & recon', cmds: [
-    ['/map', 'тактическая карта _(тима, магазины, карго, нефтянки, смерти, метки)_', 'tactical map _(team, shops, cargo, oil, deaths, pins)_'],
+    ['/map', 'тактическая карта _(тима, нефтянки, смерти, метки)_', 'tactical map _(team, oil rigs, deaths, pins)_'],
     ['/rustmap', 'детальная карта сервера (RustMaps)', 'detailed server map (RustMaps)'],
     ['/pin «грид» «текст»', 'поставить метку на карту _(видно в /map)_', 'drop a labelled map pin _(shown in /map)_'],
     ['/deaths', 'последние 5 мест смерти тимы (гриды)', 'last 5 team death spots (grids)'],
     ['/cam «имя» · /cams', 'камеры', 'cameras'],
-  ] },
-  { icon: '🛒', ru: 'Экономика', en: 'Economy', cmds: [
-    ['/market', 'все магазины на карте', 'all shops on the map'],
-    ['/price «предмет» [валюта]', 'где дешевле _(напр. /price ракета сера)_', 'cheapest shop _(e.g. /price rocket sulfur)_'],
-    ['/deals', 'лучшие цены сервера', 'best deals on the server'],
-    ['/pricehistory «предмет»', 'динамика цены', 'price trend'],
-    ['/watch «предмет» [цена]', 'следить · /watchlist · /unwatch', 'watch · /watchlist · /unwatch'],
   ] },
   { icon: '🧨', ru: 'Рейд и RustLabs', en: 'Raid & RustLabs', cmds: [
     ['/raid «объект» [кол-во]', 'сырьё на слом _(напр. /raid стена · /raid мвк 4)_', 'raw cost to break _(e.g. /raid wall · /raid armored 4)_'],
@@ -56,8 +49,14 @@ const CATS = [
 ];
 
 const INGAME = {
-  ru: '!pop · !time · !online · !team\n!teamstats · !playtime-all · !afktime-all · !deaths\n!promote [ник] · !cargo · !heli · !crates · !wipe\n!price «предмет» [валюта] · !deals\n!raid «объект» · !durability «объект»\n!craft «n» «предмет» · !recycle «n» «предмет»\n!decay «hp» «объект»\n!check «SteamID»',
-  en: '!pop · !time · !online · !team\n!teamstats · !playtime-all · !afktime-all · !deaths\n!promote [name] · !cargo · !heli · !crates · !wipe\n!price «item» [currency] · !deals\n!raid «structure» · !durability «structure»\n!craft «n» «item» · !recycle «n» «item»\n!decay «hp» «structure»\n!check «SteamID»',
+  ru: '!pop · !time · !online · !team\n!teamstats · !playtime-all · !afktime-all · !deaths\n!promote [ник] · !wipe\n!raid «объект» · !durability «объект»\n!craft «n» «предмет» · !recycle «n» «предмет»\n!decay «hp» «объект»\n!check «SteamID»',
+  en: '!pop · !time · !online · !team\n!teamstats · !playtime-all · !afktime-all · !deaths\n!promote [name] · !wipe\n!raid «structure» · !durability «structure»\n!craft «n» «item» · !recycle «n» «item»\n!decay «hp» «structure»\n!check «SteamID»',
+};
+
+// Shown at the bottom of /help so users don't hunt for removed commands.
+const REMOVED = {
+  ru: 'Рынок (/market, /price, /deals, /watch), карго, хели и другие события карты больше недоступны: 6 августа 2026 Facepunch убрали маркеры карты из Rust+.',
+  en: 'Market (/market, /price, /deals, /watch), cargo, heli and other map events are no longer available: on August 6, 2026 Facepunch removed map markers from Rust+.',
 };
 
 // English placeholder translations for the shared usage strings (the first
@@ -95,6 +94,7 @@ export function buildHelp(lang, isAdmin) {
     ),
     `💬 <b>${esc(t(lang, 'help_ingame'))}</b>\n<blockquote expandable>${esc(en ? INGAME.en : INGAME.ru)}</blockquote>`,
   ];
+  parts.push(`ℹ️ <i>${esc(en ? REMOVED.en : REMOVED.ru)}</i>`);
   if (isAdmin) {
     parts.push(`🔧 <b>${esc(t(lang, 'help_admin'))}</b>\n<blockquote expandable>${esc(en ? ADMIN.en : ADMIN.ru)}</blockquote>`);
   }

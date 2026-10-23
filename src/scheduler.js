@@ -1,7 +1,6 @@
 import { log } from './logger.js';
 import { bus, EVENTS } from './core/eventbus.js';
 import { allStorageMonitors } from './devices/store.js';
-import { recordPrices, prunePrices } from './features/economy.js';
 
 // Time-driven checks. Currently: Storage Monitor upkeep — warns the owner once
 // when a base's protection (upkeep) is about to run out and it will start to decay.
@@ -55,16 +54,5 @@ export class Scheduler {
         this.warned.delete(key); // upkeep refilled — re-arm
       }
     }
-
-    // Snapshot vending prices for each connected session (for /pricehistory).
-    for (const [ownerId, session] of this.sessions.byOwner ?? []) {
-      if (!session.isConnected()) continue;
-      try {
-        recordPrices(ownerId, session.shops());
-      } catch {
-        // ignore — best effort
-      }
-    }
-    prunePrices();
   }
 }

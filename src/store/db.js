@@ -45,6 +45,8 @@ CREATE TABLE IF NOT EXISTS enemy_sessions (
   source       TEXT NOT NULL
 );
 
+-- Former vending watchlist (/watch). Unused since Rust+ stopped sending map
+-- markers (2026-08-06); kept so existing databases still open cleanly.
 CREATE TABLE IF NOT EXISTS watchlist (
   id        INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id   INTEGER NOT NULL,
@@ -180,7 +182,8 @@ CREATE TABLE IF NOT EXISTS scenes (
   PRIMARY KEY (owner_user_id, name)
 );
 
--- Vending price snapshots (cheapest scrap price per item) for /pricehistory.
+-- Vending price snapshots for the former /pricehistory. Unused since Rust+ stopped
+-- sending map markers (2026-08-06); kept so existing databases still open cleanly.
 CREATE TABLE IF NOT EXISTS price_history (
   owner_user_id INTEGER NOT NULL,
   item_id       INTEGER NOT NULL,

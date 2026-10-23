@@ -14,8 +14,8 @@ const DICT = {
 
   start_title: { ru: 'Rust+ бот', en: 'Rust+ Bot' },
   start_tagline: {
-    ru: 'Мониторинг сервера, рейд-калькулятор, магазины, камеры и трекинг игроков — прямо в Telegram.',
-    en: 'Server monitoring, raid calculator, shops, cameras and player tracking — right inside Telegram.',
+    ru: 'Мониторинг сервера и тимы, умный дом, рейд-калькулятор, камеры и трекинг игроков — прямо в Telegram.',
+    en: 'Server and team monitoring, smart home, raid calculator, cameras and player tracking — right inside Telegram.',
   },
   start_redeem: { ru: 'Есть ключ? Активируй:', en: 'Have a key? Redeem it:' },
   start_help: { ru: 'Все команды:', en: 'All commands:' },

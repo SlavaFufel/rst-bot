@@ -1,22 +1,12 @@
 import Jimp from 'jimp';
-import { MARKER } from './markers.js';
 
-// Render a tactical map: the server's map JPEG with live markers, teammates,
-// oil rigs, recent death spots and the owner's labelled pins drawn on top.
-// World coords (0..mapSize) map into the playable area (inset by oceanMargin px
-// on each side); the Y axis is flipped.
+// Render a tactical map: the server's map JPEG with teammates, oil rigs, recent
+// death spots, in-game map notes and the owner's labelled pins drawn on top.
+// (Live markers — cargo, heli, shops — are gone: Rust+ stopped sending them on
+// 2026-08-06.) World coords (0..mapSize) map into the playable area (inset by
+// oceanMargin px on each side); the Y axis is flipped.
 
-const COLORS = {
-  [MARKER.CARGO]: [0, 140, 255], // cargo — blue
-  [MARKER.HELI]: [170, 70, 255], // patrol heli — violet (distinct from the red death X)
-  [MARKER.CH47]: [255, 150, 0], // chinook — orange
-  [MARKER.CRATE]: [255, 255, 255], // locked crate — white
-  [MARKER.EXPLOSION]: [255, 0, 0], // explosion — red
-  [MARKER.VENDING]: [40, 220, 90], // shop — green
-  [MARKER.VENDOR]: [255, 230, 0], // travelling vendor — yellow
-  [MARKER.PLAYER]: [0, 220, 220], // player — cyan
-};
-const TEAM_COLOR = [0, 220, 255]; // teammates — cyan (distinct from the green shop squares)
+const TEAM_COLOR = [0, 220, 255]; // teammates — cyan
 const OIL_COLOR = [255, 140, 0]; // oil-rig monuments — orange
 const DEATH_COLOR = [235, 30, 30]; // recent deaths / dead teammates — red
 const PIN_COLOR = [255, 80, 200]; // user pins — magenta
@@ -49,23 +39,6 @@ function dot(image, cx, cy, r, rgb) {
       const py = cy + dy;
       if (px < 0 || py < 0 || px >= width || py >= height) continue;
       image.setPixelColor(d2 > (r - 2) * (r - 2) ? ring : color, px, py); // dark outline
-    }
-  }
-}
-
-// Filled square with a dark outline. Shops read as a distinct shape from the
-// round teammate dots even though both are green.
-function square(image, cx, cy, r, rgb) {
-  const color = Jimp.rgbaToInt(rgb[0], rgb[1], rgb[2], 255);
-  const ring = Jimp.rgbaToInt(0, 0, 0, 255);
-  const { width, height } = image.bitmap;
-  for (let dy = -r; dy <= r; dy += 1) {
-    for (let dx = -r; dx <= r; dx += 1) {
-      const px = cx + dx;
-      const py = cy + dy;
-      if (px < 0 || py < 0 || px >= width || py >= height) continue;
-      const edge = Math.abs(dx) >= r - 1 || Math.abs(dy) >= r - 1;
-      image.setPixelColor(edge ? ring : color, px, py);
     }
   }
 }
@@ -142,30 +115,22 @@ async function drawLegend(image, items) {
   }
 }
 
-// markers: getMapMarkers(); teammates: getTeamInfo().members; mapSize: getInfo.
-// extras: { monuments, deaths:[{x,y}], pins:[{x,y,label}] }. Pin labels are short
-// numbers (the bundled font is Latin-only) — the caller spells them out in the
-// Telegram caption, which renders Cyrillic natively.
-export async function renderMapImage(map, markers, teammates, mapSize, extras = {}) {
+// teammates: getTeamInfo().members; mapSize: getInfo.
+// extras: { monuments, deaths:[{x,y}], pins:[{x,y,label}], mapNotes:[{x,y}] }.
+// Pin labels are short numbers (the bundled font is Latin-only) — the caller
+// spells them out in the Telegram caption, which renders Cyrillic natively.
+export async function renderMapImage(map, teammates, mapSize, extras = {}) {
   const { monuments = [], deaths = [], pins = [], mapNotes = [] } = extras;
   const image = await Jimp.read(Buffer.from(map.jpgImage));
   const size = map.width;
   const margin = map.oceanMargin ?? 0;
   const r = Math.max(7, Math.round(size / 170));
 
-  // Oil rigs (static monuments) under the live markers.
+  // Oil rigs (static monuments) at the bottom layer.
   for (const mon of monuments) {
     if (!/oil/i.test(mon.token || '')) continue;
     const [px, py] = project(mon.x, mon.y, mapSize, size, margin);
     dot(image, px, py, r, OIL_COLOR);
-  }
-
-  for (const m of markers ?? []) {
-    const rgb = COLORS[m.type];
-    if (!rgb) continue;
-    const [px, py] = project(m.x, m.y, mapSize, size, margin);
-    if (m.type === MARKER.VENDING) square(image, px, py, r, rgb);
-    else dot(image, px, py, r, rgb);
   }
 
   for (const d of deaths) {
@@ -198,10 +163,7 @@ export async function renderMapImage(map, markers, teammates, mapSize, extras = 
 
   await drawLegend(image, [
     [TEAM_COLOR, 'Team'],
-    [COLORS[MARKER.VENDING], 'Shop'],
-    [COLORS[MARKER.CARGO], 'Cargo'],
     [OIL_COLOR, 'Oil rig'],
-    [COLORS[MARKER.HELI], 'Heli'],
     [DEATH_COLOR, 'Death'],
     [PIN_COLOR, 'Pin'],
     [MAPNOTE_COLOR, 'Map note'],

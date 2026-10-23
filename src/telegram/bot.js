@@ -21,14 +21,10 @@ import { resolveBmServerId } from '../enemy/resolve.js';
 import { resolveSteamId, getSummary, getSummaries, getRustStats, getPlaytimeMinutes, renderSteamProfile, getBans, renderTrust } from '../enemy/steamstats.js';
 import { listDevices, typeName } from '../devices/store.js';
 import { saveScene, getScene, listScenes, deleteScene, setRaidScene, getRaidScene } from '../devices/scenes.js';
-import { addWatch, listWatch, removeWatch } from '../features/watchlist.js';
-import { itemName, resolveItemId, parseItemQuery } from '../util/items.js';
+import { itemName } from '../util/items.js';
 import { gridCenterXY } from '../util/grid.js';
 import { dayNight, dayNightLabel } from '../util/daynight.js';
-import { priceLookup, renderPriceTG } from '../features/pricing.js';
-import { priceHistory } from '../features/economy.js';
 import { addCamera, listCameras, removeCamera, resolveCamera } from '../features/cameras.js';
-import { sparkline } from '../enemy/analytics.js';
 import { HTML, esc, panel, expand } from './ui.js';
 import { t, L, normLang, LANGS, langName } from './i18n.js';
 import { buildHelp } from './help.js';
@@ -981,113 +977,21 @@ export function createBot({ sessions }) {
     return ctx.reply(tl(ctx, `🚨 При сигналке будет применяться сцена «${name}».`, `🚨 Scene "${name}" will be applied on alarm.`));
   });
 
-  // --- Vending machines / watchlist ---
-  bot.command('watch', (ctx) => {
-    const parts = ctx.match?.trim().split(/\s+/).filter(Boolean) ?? [];
-    const resolved = resolveItemId(parts[0] ?? '');
-    const itemId = Number(resolved);
-    const maxPrice = parts[1] ? Number(parts[1]) : null;
-    if (!resolved || !Number.isFinite(itemId)) {
-      return ctx.reply(tl(ctx, 'Использование: /watch <название|itemId> [макс_цена]\nНапр.: /watch explosive.timed 200', 'Usage: /watch <name|itemId> [max_price]\nE.g.: /watch explosive.timed 200'));
-    }
-    const id = addWatch(ctx.from.id, itemId, maxPrice);
-    return ctx.reply(tl(ctx, `🔔 Слежу за «${itemName(itemId)}»${maxPrice ? ` (≤ ${maxPrice})` : ''} — #${id}`, `🔔 Watching "${itemName(itemId)}"${maxPrice ? ` (≤ ${maxPrice})` : ''} — #${id}`));
-  });
-  bot.command('watchlist', (ctx) => {
-    const wl = listWatch(ctx.from.id);
-    if (!wl.length) return ctx.reply(tl(ctx, 'Watchlist пуст. /watch <название|itemId> [цена]', 'Watchlist is empty. /watch <name|itemId> [price]'));
-    return ctx.reply(tl(ctx, '🔔 Watchlist:', '🔔 Watchlist:') + '\n' + wl.map((w) => `#${w.id} ${itemName(w.item_id)}${w.max_price ? ` ≤ ${w.max_price}` : ''}`).join('\n'));
-  });
-  bot.command('unwatch', (ctx) => {
-    const id = Number(ctx.match?.trim());
-    if (!id) return ctx.reply(tl(ctx, 'Использование: /unwatch <id>', 'Usage: /unwatch <id>'));
-    return ctx.reply(removeWatch(id, ctx.from.id) ? tl(ctx, `Удалено #${id}`, `Deleted #${id}`) : tl(ctx, 'Не найдено.', 'Not found.'));
-  });
-  bot.command('market', async (ctx) => {
-    const session = sessions.sessionForUser(ctx.from.id);
-    if (!session) return ctx.reply(tl(ctx, 'Нет активной сессии.', 'No active session.'));
-    const shops = session.shops();
-    if (!shops.length) return ctx.reply(tl(ctx, 'Магазинов на карте сейчас нет (или маркеры ещё грузятся).', 'No shops on the map right now (or markers are still loading).'));
-    const lines = shops.map((s) => {
-      const orders = (s.sellOrders ?? [])
-        .map((o) => `  ${itemName(o.itemId)} ×${o.quantity} ${tl(ctx, 'за', 'for')} ${o.costPerItem} ${itemName(o.currencyId)}`)
-        .join('\n');
-      return `🏪 ${s.grid}:\n${orders || '  —'}`;
-    });
-    // Telegram caps a message at ~4096 chars — send in chunks so nothing is dropped.
-    let buf = '';
-    for (const block of lines) {
-      if (buf.length + block.length > 3800) {
-        await ctx.reply(buf);
-        buf = '';
-      }
-      buf += (buf ? '\n' : '') + block;
-    }
-    if (buf) await ctx.reply(buf);
-    return undefined;
-  });
-  bot.command('price', (ctx) => {
-    const query = ctx.match?.trim();
-    if (!query) {
-      return ctx.reply(tl(ctx, 'Использование: /price <предмет> [валюта]\nНапр.: /price ракета · /price ракета сера', 'Usage: /price <item> [currency]\nE.g.: /price rocket · /price rocket sulfur'));
-    }
-    const { itemId, currencyId } = parseItemQuery(query);
-    if (itemId == null) return ctx.reply(tl(ctx, 'Не знаю такой предмет. Можно по-русски, напр.: /price ракета', 'I do not know that item. Try e.g.: /price rocket'));
-    const session = sessions.sessionForUser(ctx.from.id);
-    if (!session) return ctx.reply(tl(ctx, 'Нет активной сессии.', 'No active session.'));
-    return ctx.reply(renderPriceTG(itemId, currencyId, priceLookup(session.shops(), itemId, currencyId)), HTML);
-  });
-
-  bot.command('deals', (ctx) => {
-    const session = sessions.sessionForUser(ctx.from.id);
-    if (!session) return ctx.reply(tl(ctx, 'Нет активной сессии.', 'No active session.'));
-    const best = new Map(); // itemId -> cheapest offer across all shops
-    for (const s of session.shops()) {
-      // Skip safe-zone shops (Outpost/Bandit/peace zones): NPC-fixed prices, not
-      // real player deals. whereOf() tags those shops with a "🏛️" prefix.
-      if (typeof s.grid === 'string' && s.grid.startsWith('🏛️')) continue;
-      for (const o of s.sellOrders ?? []) {
-        if (o.amountInStock <= 0) continue;
-        const cur = best.get(o.itemId);
-        if (!cur || o.costPerItem < cur.price) {
-          best.set(o.itemId, { price: o.costPerItem, grid: s.grid, cur: o.currencyId, qty: o.quantity });
-        }
-      }
-    }
-    if (!best.size) return ctx.reply(tl(ctx, 'Магазинов на карте сейчас нет.', 'No shops on the map right now.'));
-    // Most valuable first (by price) so guns/explosives surface on top.
-    const rows = [...best.entries()]
-      .sort((a, b) => b[1].price - a[1].price)
-      .slice(0, 20)
-      .map(([id, v]) => `${itemName(id)} ×${v.qty} — ${v.price} ${itemName(v.cur)} (${v.grid})`);
-    return ctx.reply(tl(ctx, '🏷️ Лучшие цены по серверу (дорогое сверху):', '🏷️ Best prices on the server (priciest first):') + '\n' + rows.join('\n'));
-  });
-
-  bot.command('pricehistory', (ctx) => {
-    const q = ctx.match?.trim();
-    if (!q) return ctx.reply(tl(ctx, 'Использование: /pricehistory <название|itemId>', 'Usage: /pricehistory <name|itemId>'));
-    const itemId = Number(resolveItemId(q));
-    if (!Number.isFinite(itemId)) return ctx.reply(tl(ctx, 'Не знаю такой предмет.', 'I do not know that item.'));
-    const rows = priceHistory(ctx.from.id, itemId);
-    if (rows.length < 2) {
-      return ctx.reply(tl(ctx, `📈 Истории по «${itemName(itemId)}» пока мало (копится раз в 30 мин, нужно ≥2 точки).`, `📈 Not enough history for "${itemName(itemId)}" yet (collected every 30 min, need ≥2 points).`));
-    }
-    const prices = rows.map((r) => r.price);
-    const last = prices[prices.length - 1];
-    const trend = last < prices[0] ? tl(ctx, '📉 дешевеет', '📉 dropping') : last > prices[0] ? tl(ctx, '📈 дорожает', '📈 rising') : tl(ctx, '➡️ стабильно', '➡️ stable');
-    return ctx.reply(
+  // Vending machine / market commands read map markers, which Facepunch stopped
+  // sending over Rust+ on 2026-08-06. Keep the commands registered so old users
+  // get an explanation instead of silence.
+  bot.command(['market', 'price', 'deals', 'pricehistory', 'watch', 'watchlist', 'unwatch', 'markers'], (ctx) =>
+    ctx.reply(
       tl(
         ctx,
-        `📈 ${itemName(itemId)} (scrap), ${rows.length} замеров:\n${sparkline(prices)}\n` +
-          `сейчас ${last} · мин ${Math.min(...prices)} · макс ${Math.max(...prices)} · ${trend}`,
-        `📈 ${itemName(itemId)} (scrap), ${rows.length} samples:\n${sparkline(prices)}\n` +
-          `now ${last} · min ${Math.min(...prices)} · max ${Math.max(...prices)} · ${trend}`,
+        '🚫 Эта функция больше недоступна: 6 августа 2026 Facepunch убрали из Rust+ все маркеры карты — магазины, карго, хели и другие события. Это касается всех Rust+ ботов.',
+        '🚫 This feature is no longer available: on August 6, 2026 Facepunch removed all map markers from Rust+ — shops, cargo, heli and other events. This affects every Rust+ bot.',
       ),
-    );
-  });
+    ),
+  );
 
-  // Live tactical map: rendered PNG with team, shops, cargo, oil rigs, recent
-  // deaths and the owner's labelled pins. Gated by MAP_RENDER (jimp is RAM-heavy);
+  // Tactical map: rendered PNG with team, oil rigs, recent deaths, in-game map
+  // notes and the owner's labelled pins. Gated by MAP_RENDER (jimp is RAM-heavy);
   // when off, point at /rustmap. Pin labels are numbers on the image → spelled out
   // in the caption (the bundled font can't draw Cyrillic).
   bot.command('map', async (ctx) => {
@@ -1113,34 +1017,11 @@ export function createBot({ sessions }) {
         ? '\n📍 ' + pins.map((p) => `${p.label} — ${String(p.note).slice(0, 20)} (${p.grid})`).join(', ')
         : '';
       await ctx.replyWithPhoto(new InputFile(Buffer.from(png), 'map.png'), {
-        caption: tl(ctx, '🗺️ Карта: тима, магазины, карго, нефтянки, смерти, метки', '🗺️ Map: team, shops, cargo, oil, deaths, pins') + legend,
+        caption: tl(ctx, '🗺️ Карта: тима, нефтянки, смерти, метки', '🗺️ Map: team, oil rigs, deaths, pins') + legend,
       });
     } catch (err) {
       await ctx.reply(tl(ctx, 'Не удалось нарисовать карту: ', 'Could not render the map: ') + err.message);
     }
-  });
-
-  // Diagnostic: dump live map markers (type + grid; crates show nearest monument).
-  // Lets us confirm whether the oil-rig locked crate actually emits a marker.
-  bot.command('markers', (ctx) => {
-    const session = sessions.sessionForUser(ctx.from.id);
-    if (!session) return ctx.reply(tl(ctx, 'Нет активной сессии.', 'No active session.'));
-    const TYPE = { 1: 'Player', 2: 'Explosion', 3: 'Shop', 4: 'CH47', 5: 'Cargo', 6: 'Crate', 7: 'Radius', 8: 'Heli', 9: 'Vendor' };
-    const d = session.markerDump();
-    // Vending machines dominate (often 100+) and bury the interesting markers —
-    // collapse them into a count so crates/cargo/heli stand out for debugging.
-    const shops = d.markers.filter((m) => m.type === 3).length;
-    const rest = d.markers.filter((m) => m.type !== 3);
-    const lines = rest.map((m) => `${TYPE[m.type] ?? m.type} @ ${esc(m.grid)}${m.near ? ` → ${esc(m.near)}` : ''}`);
-    const head = tl(
-      ctx,
-      `🧭 <b>Маркеры:</b> ${d.markers.length} (🏪 ${shops}) · монументов ${d.monuments} (нефтянок ${d.oil})`,
-      `🧭 <b>Markers:</b> ${d.markers.length} (🏪 ${shops}) · monuments ${d.monuments} (oil ${d.oil})`,
-    );
-    const body = lines.length
-      ? '\n' + panel(lines.join('\n'))
-      : tl(ctx, '\n<i>кроме магазинов сейчас ничего (карго/ящиков/хели нет)</i>', '\n<i>nothing besides shops right now</i>');
-    return ctx.reply(head + body, HTML);
   });
 
   bot.command('rustmap', (ctx) => {
@@ -1152,8 +1033,8 @@ export function createBot({ sessions }) {
     return ctx.reply(
       tl(
         ctx,
-        `🗺️ Детальная карта сервера (RustMaps):\nhttps://rustmaps.com/map/${sz}_${seed}\n\nМонументы, грид, лут и спавны — всё там. Живые метки (карго/хели/ящики) — в игре: !cargo · !heli · !crates.`,
-        `🗺️ Detailed server map (RustMaps):\nhttps://rustmaps.com/map/${sz}_${seed}\n\nMonuments, grid, loot and spawns — all there. Live markers (cargo/heli/crates) — in game: !cargo · !heli · !crates.`,
+        `🗺️ Детальная карта сервера (RustMaps):\nhttps://rustmaps.com/map/${sz}_${seed}\n\nМонументы, грид, лут и спавны — всё там.`,
+        `🗺️ Detailed server map (RustMaps):\nhttps://rustmaps.com/map/${sz}_${seed}\n\nMonuments, grid, loot and spawns — all there.`,
       ),
     );
   });

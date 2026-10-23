@@ -2,32 +2,16 @@ import { bus, EVENTS } from '../core/eventbus.js';
 import { db } from '../store/db.js';
 import { log } from '../logger.js';
 import { fmt } from './format.js';
-import { matchOrders } from '../features/watchlist.js';
-import { itemName } from '../util/items.js';
 import { getScene, getRaidScene } from '../devices/scenes.js';
 import { mirrorEnabled, langOf } from '../access/users.js';
-import { L } from './i18n.js';
 
 // event -> { type: subscription key, toGame: mirror into in-game team chat }
 const ROUTES = {
-  [EVENTS.CARGO_SPAWNED]: { type: 'cargo', toGame: true },
-  [EVENTS.CARGO_LEFT]: { type: 'cargo', toGame: false },
-  [EVENTS.CARGO_CRATE_SPAWNED]: { type: 'cargo', toGame: true },
-  [EVENTS.CARGO_CRATE_LOOTED]: { type: 'cargo', toGame: true },
-  [EVENTS.HELI_SPAWNED]: { type: 'heli', toGame: true },
-  [EVENTS.HELI_DOWN]: { type: 'heli', toGame: true },
-  [EVENTS.CH47_SPAWNED]: { type: 'ch47', toGame: true },
-  [EVENTS.OILRIG_TRIGGERED]: { type: 'oilrig', toGame: true },
-  [EVENTS.OILRIG_CRATE_READY]: { type: 'oilrig', toGame: true },
-  [EVENTS.BRADLEY_DESTROYED]: { type: 'bradley', toGame: false },
-  [EVENTS.SHOP_NEW]: { type: 'shop', toGame: false },
-  [EVENTS.SHOP_GONE]: { type: 'shop', toGame: false },
   [EVENTS.TEAM_JOIN]: { type: 'team', toGame: false },
   [EVENTS.TEAM_LEAVE]: { type: 'team', toGame: false },
   [EVENTS.TEAM_DEATH]: { type: 'team', toGame: false },
   [EVENTS.TEAM_RESPAWN]: { type: 'team', toGame: false },
   [EVENTS.TEAM_AFK]: { type: 'team', toGame: false },
-  [EVENTS.VENDOR_SPAWNED]: { type: 'vendor', toGame: false },
   [EVENTS.FRIEND_ONLINE]: { type: 'friend', toGame: false },
   [EVENTS.FRIEND_OFFLINE]: { type: 'friend', toGame: false },
   [EVENTS.ENEMY_ONLINE]: { type: 'enemy', toGame: true },
@@ -93,21 +77,6 @@ export function createNotifier(bot, sessionManager) {
       if (sceneName) {
         const scene = getScene(session.ownerUserId, sceneName);
         if (scene) session.applySwitches(scene).catch(() => {});
-      }
-    }
-
-    // Watchlist: a new shop's sell orders may match someone's tracked items.
-    if (event === EVENTS.SHOP_NEW && payload.sellOrders?.length) {
-      for (const uid of recipients) {
-        const lang = langOf(uid);
-        for (const h of matchOrders(uid, payload.sellOrders)) {
-          const line = L(
-            lang,
-            `🔔 Watchlist: ${itemName(h.itemId)} за ${h.price} ${itemName(h.currencyId)} (сток ${h.stock}) — ${payload.grid}`,
-            `🔔 Watchlist: ${itemName(h.itemId)} for ${h.price} ${itemName(h.currencyId)} (stock ${h.stock}) — ${payload.grid}`,
-          );
-          bot.api.sendMessage(uid, line).catch(() => {});
-        }
       }
     }
   };

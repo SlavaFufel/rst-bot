@@ -56,10 +56,8 @@ export class RustSession {
   }
 
   async _startPolling() {
-    // Run init() on EVERY (re)connect: it re-arms firstMarkerPoll so the first
-    // marker poll after a reconnect re-seeds silently. Without this, a server
-    // restart (which reissues marker ids) made every standing shop look "new"
-    // and spammed SHOP_NEW. Re-running it also refreshes seed/map/monuments.
+    // Run init() on EVERY (re)connect: refreshes seed/map size/monuments, which
+    // change after a server restart or wipe.
     await this.poller.init();
     if (this.pollingActive) return; // reconnect — intervals already running, don't double-start
     this.pollingActive = true;
@@ -115,13 +113,6 @@ export class RustSession {
   isConnected() { return this.client.connected; }
   mapSize() { return this.poller.mapSize; }
   seed() { return this.poller.lastSeed; }
-
-  // Current map markers with grid labels (for in-game !cargo/!heli etc.).
-  liveMarkers() {
-    const out = [];
-    for (const m of this.poller.markers.values()) out.push({ type: m.type, grid: this.poller.gridNear(m) });
-    return out;
-  }
   getInfo() { return this.client.getInfo(); }
   getTime() { return this.client.getTime(); }
   getTeamInfo() { return this.client.getTeamInfo(); }
@@ -129,7 +120,6 @@ export class RustSession {
   promoteToLeader(steamId) { return this.client.promoteToLeader(steamId); }
   teamStats() { return this.poller.teamStatsList(); }
   recentDeaths() { return this.poller.recentDeaths(); }
-  markerDump() { return this.poller.markerDump(); }
   getEntityInfo(entityId) { return this.client.getEntityInfo(entityId); }
   setEntityValue(entityId, value) { return this.client.setEntityValue(entityId, value); }
 
@@ -157,16 +147,15 @@ export class RustSession {
       }
     }
   }
-  shops() { return this.poller.shops(); }
   getMap() { return this.client.getMap(); }
   cameraSnapshot(identifier) { return this.client.cameraSnapshot(identifier); }
 
-  // Tactical map: server map image with live markers + teammates + oil rigs +
-  // recent deaths + the owner's pins drawn on top. pins: [{ x, y, label }].
+  // Tactical map: server map image with teammates + oil rigs + recent deaths +
+  // in-game map notes + the owner's pins drawn on top. pins: [{ x, y, label }].
+  // (No live markers — Rust+ stopped sending them on 2026-08-06.)
   async tacticalMap({ pins = [] } = {}) {
-    const [map, markers, team] = await Promise.all([
+    const [map, team] = await Promise.all([
       this.client.getMap(),
-      this.client.getMapMarkers(),
       this.client.getTeamInfo().catch(() => ({ members: [] })),
     ]);
     // In-game map notes the team placed in Rust (personal + leader), deduped by cell.
@@ -176,20 +165,11 @@ export class RustSession {
       const key = `${Math.round(n.x)},${Math.round(n.y)}`;
       return seen.has(key) ? false : seen.add(key);
     });
-    return renderMapImage(map, markers, team.members ?? [], this.poller.mapSize || 4500, {
+    return renderMapImage(map, team.members ?? [], this.poller.mapSize || 4500, {
       monuments: this.poller.monuments,
       deaths: this.poller.recentDeaths(),
       pins,
       mapNotes,
     });
-  }
-
-  // Raw live markers + team for a text listing (used when image render is off).
-  async mapMarkersData() {
-    const [markers, team] = await Promise.all([
-      this.client.getMapMarkers(),
-      this.client.getTeamInfo().catch(() => ({ members: [] })),
-    ]);
-    return { markers: markers ?? [], team: team.members ?? [], mapSize: this.poller.mapSize || 4500 };
   }
 }

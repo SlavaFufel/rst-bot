@@ -1,60 +1,9 @@
 import { EVENTS } from '../core/eventbus.js';
 
-const OIL_RIG_RU = { small: 'Малая нефтянка', large: 'Большая нефтянка' };
-const OIL_RIG_EN = { small: 'Small Oil Rig', large: 'Large Oil Rig' };
-
 // Bilingual alert formatters: { ru, en }. fmt(event, payload, lang) renders in
 // the recipient's language (notifier picks lang per user); the in-game team-chat
 // mirror always passes 'ru'.
 const FORMATTERS = {
-  [EVENTS.CARGO_SPAWNED]: {
-    ru: (p) => `🚢 Cargo Ship заспавнился (${p.grid})`,
-    en: (p) => `🚢 Cargo Ship spawned (${p.grid})`,
-  },
-  [EVENTS.CARGO_LEFT]: {
-    ru: () => '🚢 Cargo Ship ушёл с карты',
-    en: () => '🚢 Cargo Ship left the map',
-  },
-  [EVENTS.CARGO_CRATE_SPAWNED]: {
-    ru: (p) => `📦 Карго: заспавнился крейт #${p.n} (${p.grid})`,
-    en: (p) => `📦 Cargo: crate #${p.n} spawned (${p.grid})`,
-  },
-  [EVENTS.CARGO_CRATE_LOOTED]: {
-    ru: (p) => `📭 Карго: крейт слутали${p.left ? ` (осталось ${p.left})` : ''} (${p.grid})`,
-    en: (p) => `📭 Cargo: crate looted${p.left ? ` (${p.left} left)` : ''} (${p.grid})`,
-  },
-  [EVENTS.HELI_SPAWNED]: {
-    ru: (p) => `🚁 Патрульный вертолёт (${p.grid})`,
-    en: (p) => `🚁 Patrol Helicopter (${p.grid})`,
-  },
-  [EVENTS.HELI_DOWN]: {
-    ru: (p) => `🚁💥 Вертолёт уничтожен${p.grid ? ` (${p.grid})` : ''}`,
-    en: (p) => `🚁💥 Helicopter destroyed${p.grid ? ` (${p.grid})` : ''}`,
-  },
-  [EVENTS.CH47_SPAWNED]: {
-    ru: (p) => `🚁 Chinook (CH47) на карте — ${p.grid}`,
-    en: (p) => `🚁 Chinook (CH47) on the map — ${p.grid}`,
-  },
-  [EVENTS.OILRIG_TRIGGERED]: {
-    ru: (p) => `🛢️ ${OIL_RIG_RU[p.rig] ?? 'Нефтянка'} активирована — прилетел CH47 с учёными · ящик откроется ~через 15 мин`,
-    en: (p) => `🛢️ ${OIL_RIG_EN[p.rig] ?? 'Oil Rig'} triggered — CH47 brought scientists · crate unlocks in ~15 min`,
-  },
-  [EVENTS.OILRIG_CRATE_READY]: {
-    ru: (p) => `🛢️ ${OIL_RIG_RU[p.rig] ?? 'Нефтянка'}: ящик разблокирован — можно лутать (≈таймер)`,
-    en: (p) => `🛢️ ${OIL_RIG_EN[p.rig] ?? 'Oil Rig'}: locked crate unlocked — ready to loot (≈timer)`,
-  },
-  [EVENTS.BRADLEY_DESTROYED]: {
-    ru: (p) => `💥 Взрыв у ${p.where} (Bradley / вертолёт)`,
-    en: (p) => `💥 Explosion at ${p.where} (Bradley / heli)`,
-  },
-  [EVENTS.SHOP_NEW]: {
-    ru: (p) => `🏪 Новый магазин (${p.grid})`,
-    en: (p) => `🏪 New shop (${p.grid})`,
-  },
-  [EVENTS.SHOP_GONE]: {
-    ru: (p) => `🏪❌ Магазин пропал (${p.grid})`,
-    en: (p) => `🏪❌ Shop gone (${p.grid})`,
-  },
   [EVENTS.TEAM_JOIN]: {
     ru: (p) => `🟢 ${p.name} зашёл на сервер`,
     en: (p) => `🟢 ${p.name} joined the server`,
@@ -74,10 +23,6 @@ const FORMATTERS = {
   [EVENTS.TEAM_AFK]: {
     ru: (p) => `😴 ${p.name} AFK уже ${p.minutes} мин`,
     en: (p) => `😴 ${p.name} AFK for ${p.minutes} min`,
-  },
-  [EVENTS.VENDOR_SPAWNED]: {
-    ru: (p) => `🛒 Бродячий торговец (${p.grid})`,
-    en: (p) => `🛒 Traveling Vendor (${p.grid})`,
   },
   [EVENTS.DECAY_WARNING]: {
     ru: (p) => `🧱 Upkeep заканчивается: ${p.name} — осталось ~${p.hours} ч, база начнёт разрушаться`,

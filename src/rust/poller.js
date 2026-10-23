@@ -2,31 +2,21 @@ import { config } from '../config.js';
 import { log } from '../logger.js';
 import { bus, EVENTS } from '../core/eventbus.js';
 import { logEvent } from '../store/db.js';
-import { alreadyHandled, markHandled, cleanupDedup } from '../core/dedup.js';
-import { gridFromXY, nearestGrid } from '../util/grid.js';
-import { MARKER, indexById, diffMarkers, nearestMonument, distance } from './markers.js';
+import { gridFromXY } from '../util/grid.js';
 import { loadTeamStats, saveTeamStats, clearOtherWipes } from '../store/teamStats.js';
 
+// Map markers (cargo, heli, CH47, crates, vending machines, travelling vendor)
+// are no longer polled: Facepunch stopped sending them over Rust+ on 2026-08-06,
+// so every event built on them is gone. Team, time, server info, devices and
+// cameras are unaffected.
+
 const SERVER_DOWN_THRESHOLD = 3;
-const MARKER_TTL_SECONDS = 6 * 3600;
 const AFK_THRESHOLD_MS = 5 * 60_000; // online + unmoved this long → AFK
 const TIME_LEAD_MINUTES = 10; // fire "night/dawn soon" ~10 real-world minutes ahead
 const STATS_DT_CAP_MS = 30_000; // cap per-poll time delta (protect against reconnect gaps)
 const STATS_DIST_CAP_M = 2_000; // ignore per-poll position jumps above this (teleport/respawn)
 const STATS_FLUSH_MS = 60_000; // persist accumulated team stats at most this often
 const MAX_DEATHS = 5; // recent team death spots kept for !deaths / /deaths
-const CARGO_CRATE_RADIUS = 120; // a crate within this of the cargo marker rides the ship
-// Oil rigs aren't detectable via Crate markers (Rust+ doesn't emit them there).
-// The reliable signal is the CH47 chinook that flies in to drop heavy scientists:
-// a CH47 within this many world-units of an oil monument = that rig's event.
-// (rustplusplus constants.js OIL_RIG_CHINOOK_47_MAX_SPAWN_DISTANCE = 550.)
-// A CH47 that SPAWNS within this of an oil monument is that rig's heavy-scientist
-// delivery (rustplusplus OIL_RIG_CHINOOK_47_MAX_SPAWN_DISTANCE). The crate-drop
-// chinook spawns at the map edge instead, so checking the spawn (appear) position
-// cleanly separates the two — no per-poll tracking or dwell heuristic needed.
-const OIL_RIG_CHINOOK_RADIUS = 550;
-const OIL_RIG_REFIRE_MS = 10 * 60_000; // ignore a repeat trigger for the same rig within this window (marker flicker)
-const OIL_CRATE_UNLOCK_MS = 15 * 60_000; // self-run estimate: crate unlocks ~15 min after the rig is triggered (the API no longer exposes the real timer — Facepunch removed it 2023-05-04)
 
 // In-game hour float (0..24) → "HH:MM".
 function hhmm(h) {
@@ -44,8 +34,7 @@ export class Poller {
     this.client = client;
     this.bus = busArg ?? bus;
     this.sessionId = sessionId;
-    this.markers = new Map();
-    this.monuments = [];
+    this.monuments = []; // static, from getMap() — still available
     this.mapSize = 0;
     this.lastSeed = null;
     this.lastWipe = null;
@@ -55,21 +44,15 @@ export class Poller {
     this.lastTeamPollAt = null; // timestamp of previous pollTeam (for time deltas)
     this.lastStatsFlush = 0;
     this.deaths = []; // newest-first ring of last MAX_DEATHS deaths { name, grid, at, x, y }
-    this.cargoCrates = new Set(); // marker ids of crates currently riding the cargo ship
-    this.cargoCrateSeq = 0; // #N counter within the current cargo cycle (reset when it leaves)
-    this.oilFiredAt = {}; // { small|large: lastFiredMs } — per-rig refire cooldown
-    this.oilTimers = []; // pending "crate unlocked" timers (cleared on stop)
     this.failCount = 0;
     this.serverDown = false;
     this.lastIsDay = null; // day/night transition tracking
     this.nightSoonFired = false; // edge-trigger for "night soon" (reset each night)
     this.dawnSoonFired = false; // edge-trigger for "dawn soon" (reset each day)
-    this.firstMarkerPoll = true; // seed standing markers silently on (re)connect
     this.intervals = [];
   }
 
   async init() {
-    this.firstMarkerPoll = true; // re-warm after every reconnect
     try {
       const info = await this.client.getInfo();
       this.mapSize = info.mapSize;
@@ -88,24 +71,20 @@ export class Poller {
       this.monuments = (map.monuments ?? []).map((m) => ({ token: m.token, x: m.x, y: m.y }));
       log.info(`Monuments loaded: ${this.monuments.length}`);
     } catch (err) {
-      log.warn('getMap failed — oil rig detection disabled until reconnect:', err.message);
+      log.warn('getMap failed — monuments unavailable until reconnect:', err.message);
     }
   }
 
   start() {
-    const { markersMs, teamMs, infoMs, timeMs } = config.poll;
-    this.every(markersMs, () => this.pollMarkers());
+    const { teamMs, infoMs, timeMs } = config.poll;
     this.every(teamMs, () => this.pollTeam());
     this.every(infoMs, () => this.pollInfo());
     this.every(timeMs, () => this.pollTime());
-    this.every(300_000, async () => cleanupDedup());
   }
 
   stop() {
     this.intervals.forEach(clearInterval);
     this.intervals = [];
-    this.oilTimers.forEach(clearTimeout);
-    this.oilTimers = [];
     // Persist whatever we accumulated since the last throttled flush.
     if (this.sessionId != null) {
       try { saveTeamStats(this.sessionId, this.statsWipe, this.stats); } catch { /* ignore */ }
@@ -127,179 +106,9 @@ export class Poller {
     this.intervals.push(id);
   }
 
-  grid(marker) {
-    return gridFromXY(marker.x, marker.y, this.mapSize) ?? '??';
-  }
-
-  // Grid cell of a marker, or the NEAREST edge cell (~-prefixed) for markers that
-  // spawn outside the lettered grid in open water (cargo ship, patrol heli,
-  // chinook). '??' only when the map size isn't loaded yet.
-  gridNear(marker) {
-    const exact = gridFromXY(marker.x, marker.y, this.mapSize);
-    if (exact) return exact;
-    const near = nearestGrid(marker.x, marker.y, this.mapSize);
-    return near ? `~${near}` : '??';
-  }
-
-  // Human-readable location of a marker: its grid cell, or — when it sits
-  // outside the lettered grid (safe-zone shops) — the monument's name. Avoids
-  // the bare "??" that confused users on shop notifications.
-  whereOf(marker) {
-    let where = this.grid(marker);
-    if (where === '??' && this.mapSize) {
-      const mon = nearestMonument(marker, this.monuments, 300);
-      const token = mon?.token ?? '';
-      if (/compound|outpost/i.test(token)) where = '🏛️ Аутпост';
-      else if (/bandit/i.test(token)) where = '🏛️ Бандитка';
-      else where = '🏛️ Мирная зона';
-    }
-    return where;
-  }
-
-  // Current vending machines on the map (for /market and /price).
-  shops() {
-    const out = [];
-    for (const marker of this.markers.values()) {
-      if (marker.type !== MARKER.VENDING) continue;
-      out.push({ grid: this.whereOf(marker), id: marker.id, sellOrders: marker.sellOrders ?? [] });
-    }
-    return out;
-  }
-
-  fresh(key) {
-    // Scope dedup by session so two sessions seeing the same marker id don't collide.
-    const k = this.sessionId != null ? `s${this.sessionId}:${key}` : key;
-    if (alreadyHandled(k)) return false;
-    markHandled(k, MARKER_TTL_SECONDS);
-    return true;
-  }
-
-  async pollMarkers() {
-    const current = indexById(await this.client.getMapMarkers());
-    if (this.firstMarkerPoll) {
-      // First poll after (re)connect: these markers already existed before we
-      // were watching, so seed them silently instead of announcing every
-      // standing shop/cargo as "new" (that burst is what users saw on connect).
-      this.markers = current;
-      this.firstMarkerPoll = false;
-      return;
-    }
-    const { appeared, disappeared } = diffMarkers(this.markers, current);
-    // Cargo positions from the CURRENT poll — used to tell cargo loot crates apart
-    // from monument/airdrop crates, order-independently of the diff arrays.
-    const cargoNow = [...current.values()].filter((m) => m.type === MARKER.CARGO);
-    for (const marker of appeared) this.onAppear(marker, cargoNow);
-    for (const marker of disappeared) this.onDisappear(marker, cargoNow);
-    this.markers = current;
-  }
-
-  onAppear(marker, cargoNow = []) {
-    switch (marker.type) {
-      case MARKER.CARGO:
-        if (this.fresh(`cargo:${marker.id}`)) this.fire(EVENTS.CARGO_SPAWNED, { grid: this.gridNear(marker), id: marker.id });
-        break;
-      case MARKER.HELI:
-        if (this.fresh(`heli:${marker.id}`)) this.fire(EVENTS.HELI_SPAWNED, { grid: this.gridNear(marker), id: marker.id });
-        break;
-      case MARKER.CH47: {
-        // A CH47 that spawns AT an oil rig (within range) is the heavy-scientist
-        // delivery = the rig was just activated ("ресается"). The crate-drop
-        // chinook spawns at the map edge, so its spawn position is never near a
-        // rig — that's what separates them. No per-poll tracking needed.
-        const rig = this.nearestOilRig(marker);
-        log.info(`CH47 appeared @ ${this.grid(marker)} — ${rig ? `OIL RIG ${rig.token}` : 'open map (crate chinook)'}`);
-        if (rig) {
-          const which = /large/i.test(rig.token || '') ? 'large' : 'small';
-          const now = Date.now();
-          if (now - (this.oilFiredAt[which] || 0) > OIL_RIG_REFIRE_MS) {
-            this.oilFiredAt[which] = now;
-            this.fire(EVENTS.OILRIG_TRIGGERED, { rig: which });
-            const timer = setTimeout(() => this.fire(EVENTS.OILRIG_CRATE_READY, { rig: which }), OIL_CRATE_UNLOCK_MS);
-            if (typeof timer.unref === 'function') timer.unref(); // don't keep the process alive
-            this.oilTimers.push(timer);
-          }
-        } else if (this.fresh(`ch47:${marker.id}`)) {
-          this.fire(EVENTS.CH47_SPAWNED, { grid: this.gridNear(marker), id: marker.id });
-        }
-        break;
-      }
-      case MARKER.VENDOR:
-        if (this.fresh(`vendor:${marker.id}`)) this.fire(EVENTS.VENDOR_SPAWNED, { grid: this.gridNear(marker), id: marker.id });
-        break;
-      case MARKER.CRATE: {
-        // Oil-rig crates are NOT emitted as Crate markers (confirmed via live
-        // capture + rustplusplus removing this exact handling) — the rig is
-        // detected via the CH47 chinook spawn instead (see the CH47 case). Here we
-        // only handle crates riding the active cargo ship.
-        if (cargoNow.some((c) => distance(marker, c) <= CARGO_CRATE_RADIUS) && !this.cargoCrates.has(marker.id)) {
-          this.cargoCrates.add(marker.id);
-          this.cargoCrateSeq += 1;
-          this.fire(EVENTS.CARGO_CRATE_SPAWNED, { n: this.cargoCrateSeq, grid: this.gridNear(marker), id: marker.id });
-        }
-        break;
-      }
-      case MARKER.EXPLOSION: {
-        const monument = nearestMonument(marker, this.monuments);
-        if (this.fresh(`expl:${marker.id}`)) {
-          this.fire(EVENTS.BRADLEY_DESTROYED, { where: monument?.token ?? this.gridNear(marker), id: marker.id });
-        }
-        break;
-      }
-      case MARKER.VENDING: {
-        // Skip NPC safe-zone vending (Outpost/Bandit/peace zone): they're
-        // permanent fixtures, not player shops — announcing them is noise.
-        const where = this.whereOf(marker);
-        if (!where.startsWith('🏛️') && this.fresh(`shop:${marker.id}`)) {
-          this.fire(EVENTS.SHOP_NEW, { grid: where, id: marker.id, sellOrders: marker.sellOrders ?? [] });
-        }
-        // TODO (M5): scan sellOrders against watchlist and fire WATCH_HIT.
-        break;
-      }
-      default:
-        break;
-    }
-  }
-
-  onDisappear(marker, cargoNow = []) {
-    if (marker.type === MARKER.CARGO) {
-      this.fire(EVENTS.CARGO_LEFT, { id: marker.id });
-      this.cargoCrates.clear(); // ship gone → its crates vanish too; start fresh next cycle
-      this.cargoCrateSeq = 0;
-      return;
-    }
-    if (marker.type === MARKER.HELI) this.fire(EVENTS.HELI_DOWN, { grid: this.gridNear(marker), id: marker.id });
-    if (marker.type === MARKER.VENDING) {
-      // Mirror the SHOP_NEW rule: never announce NPC safe-zone vending
-      // (Outpost/Bandit/peace zone) — they're permanent fixtures, and a transient
-      // marker blip was spamming "shop gone (🏛️ peace zone)".
-      const where = this.whereOf(marker);
-      if (!where.startsWith('🏛️')) this.fire(EVENTS.SHOP_GONE, { grid: where, id: marker.id });
-    }
-    if (marker.type === MARKER.CRATE && this.cargoCrates.has(marker.id)) {
-      this.cargoCrates.delete(marker.id);
-      // Only a real loot if the ship is still here; if it left this poll, the crate
-      // vanished with the ship (handled above) — don't fire a false "looted".
-      if (cargoNow.length) {
-        this.fire(EVENTS.CARGO_CRATE_LOOTED, { left: this.cargoCrates.size, grid: this.gridNear(marker), id: marker.id });
-      }
-    }
-  }
-
   fire(type, payload) {
     logEvent(type, payload, this.sessionId);
     this.bus.emit(type, payload);
-  }
-
-  // Nearest oil-rig monument within OIL_RIG_CHINOOK_RADIUS of a marker, or null.
-  nearestOilRig(marker) {
-    let best = null;
-    let bestD = OIL_RIG_CHINOOK_RADIUS;
-    for (const mon of this.monuments) {
-      if (!/oil/i.test(mon.token || '')) continue;
-      const d = distance(marker, mon);
-      if (d <= bestD) { best = mon; bestD = d; }
-    }
-    return best;
   }
 
   async pollTeam() {
@@ -391,24 +200,6 @@ export class Poller {
     return [...this.deaths];
   }
 
-  // Diagnostic snapshot of live markers (type + grid; crates note nearest monument).
-  // Used by /markers to debug oil-rig / cargo crate detection on a live server.
-  markerDump() {
-    const markers = [...this.markers.values()].map((m) => {
-      const e = { type: m.type, grid: this.grid(m) };
-      if (m.type === MARKER.CRATE) {
-        const mon = nearestMonument(m, this.monuments, 800);
-        e.near = mon ? `${mon.token} ${Math.round(distance(m, mon))}m` : '—';
-      }
-      return e;
-    });
-    return {
-      markers,
-      monuments: this.monuments.length,
-      oil: this.monuments.filter((m) => /oil/i.test(m.token || '')).length,
-    };
-  }
-
   async pollInfo() {
     try {
       const info = await this.client.getInfo();
@@ -419,19 +210,11 @@ export class Poller {
       }
       if (this.lastSeed !== null && (info.seed !== this.lastSeed || info.wipeTime !== this.lastWipe)) {
         this.fire(EVENTS.WIPE_DETECTED, { seed: info.seed, wipeTime: info.wipeTime });
-        this.markers = new Map();
-        this.firstMarkerPoll = true; // re-seed silently → no "new shop" flood after a wipe
         // New wipe → team stats start fresh; drop the old wipe's rows.
         this.stats = new Map();
         this.statsWipe = Number(info.wipeTime) || 0;
         this.lastTeamPollAt = null;
         this.deaths = [];
-        // Oil-rig state must reset too: marker ids restart low after a wipe, so a
-        // stale "fired" id could swallow a real new event, and a pending unlock
-        // timer would fire a phantom "crate unlocked" into the new wipe.
-        this.oilTimers.forEach(clearTimeout);
-        this.oilTimers = [];
-        this.oilFiredAt = {};
         clearOtherWipes(this.sessionId, this.statsWipe);
       }
       this.lastSeed = info.seed;

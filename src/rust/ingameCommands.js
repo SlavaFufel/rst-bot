@@ -1,10 +1,7 @@
 import { log } from '../logger.js';
-import { MARKER } from './markers.js';
 import { raidCost } from '../util/raidcalc.js';
-import { itemName, parseItemQuery } from '../util/items.js';
 import { craftInfo, recycleInfo, decayInfo, durabilityInfo, fmtDuration, num } from '../util/rustlabs.js';
 import { dayNight } from '../util/daynight.js';
-import { priceLookup, renderPriceGame } from '../features/pricing.js';
 import { resolveSteamId, getSummary, getBans, getRustStats, getPlaytimeMinutes } from '../enemy/steamstats.js';
 
 // "10 rocket" → { qty: 10, rest: 'rocket' }; "rocket" → { qty: 1, rest: 'rocket' }.
@@ -31,31 +28,13 @@ function packLine(prefix, parts, budget = 116) {
 // Read-only commands usable from the in-game team chat (prefix '!').
 // Replies go back into team chat, which caps at ~128 chars, so keep them short.
 const HELP =
-  '!pop !time !online !team !teamstats !playtime-all !afktime-all !promote [ник] !cargo !heli !crates !price <предмет> !deals !raid <об> !durability <об> !craft <n> <предмет> !recycle <n> <предмет> !decay <hp> <об> !check <id> !wipe';
+  '!pop !time !online !team !teamstats !playtime-all !afktime-all !promote [ник] !raid <об> !durability <об> !craft <n> <предмет> !recycle <n> <предмет> !decay <hp> <об> !check <id> !wipe';
 
-// Safe-zone shops (Outpost/Bandit Camp/peace zones) — excluded from deals: their
-// prices are NPC-fixed and not real player offers. whereOf() tags them "🏛️ ...".
-const isSafeZoneShop = (s) => typeof s.grid === 'string' && s.grid.startsWith('🏛️');
-
-function gridsOf(session, type) {
-  return session.liveMarkers().filter((m) => m.type === type).map((m) => m.grid);
-}
-
-// Cheapest in-stock offer per item across the server's shops.
-function cheapestByItem(session) {
-  const best = new Map();
-  for (const s of session.shops()) {
-    if (isSafeZoneShop(s)) continue;
-    for (const o of s.sellOrders ?? []) {
-      if (o.amountInStock <= 0) continue;
-      const cur = best.get(o.itemId);
-      if (!cur || o.costPerItem < cur.price) {
-        best.set(o.itemId, { price: o.costPerItem, grid: s.grid, cur: o.currencyId });
-      }
-    }
-  }
-  return best;
-}
+// Commands that read map markers (events, vending machines). Facepunch stopped
+// sending markers over Rust+ on 2026-08-06 — answer with an explanation instead
+// of silence so players know it's not the bot being broken.
+const MARKER_COMMANDS = new Set(['cargo', 'heli', 'crates', 'price', 'buy', 'deals']);
+const MARKERS_GONE = 'Недоступно: Facepunch убрали маркеры карты из Rust+ (06.08.2026)';
 
 export async function handleInGameCommand(session, teamMessage) {
   const raw = (teamMessage?.message ?? '').trim();
@@ -63,6 +42,7 @@ export async function handleInGameCommand(session, teamMessage) {
   const [cmd, ...rest] = raw.slice(1).split(/\s+/);
   const arg = rest.join(' ');
   const reply = (text) => session.sendToGame(text);
+  if (MARKER_COMMANDS.has((cmd || '').toLowerCase())) return reply(MARKERS_GONE);
 
   try {
     switch ((cmd || '').toLowerCase()) {
@@ -97,42 +77,6 @@ export async function handleInGameCommand(session, teamMessage) {
         const team = await session.getTeamInfo();
         const s = (team.members ?? []).map((m) => `${m.name}${m.isOnline ? (m.isAlive ? '+' : 'x') : '-'}`);
         reply(s.length ? `Тима: ${s.join(' ')}` : 'Тима пуста');
-        break;
-      }
-
-      case 'cargo': {
-        const g = gridsOf(session, MARKER.CARGO);
-        reply(g.length ? `Карго: ${g.join(', ')}` : 'Карго нет на карте');
-        break;
-      }
-
-      case 'heli': {
-        const g = gridsOf(session, MARKER.HELI);
-        reply(g.length ? `Хели: ${g.join(', ')}` : 'Хели нет на карте');
-        break;
-      }
-
-      case 'crates': {
-        const g = gridsOf(session, MARKER.CRATE);
-        reply(g.length ? `Ящики: ${g.slice(0, 6).join(', ')}` : 'Ящиков нет на карте');
-        break;
-      }
-
-      case 'price':
-      case 'buy': {
-        if (!arg) return reply('Напр.: !price ракета сера');
-        const { itemId, currencyId } = parseItemQuery(arg);
-        if (itemId == null) return reply('Не знаю такой предмет');
-        reply(renderPriceGame(itemId, currencyId, priceLookup(session.shops(), itemId, currencyId)));
-        break;
-      }
-
-      case 'deals': {
-        const rows = [...cheapestByItem(session).entries()]
-          .sort((a, b) => b[1].price - a[1].price)
-          .slice(0, 4)
-          .map(([id, v]) => `${itemName(id)} ${v.price}${v.grid}`);
-        reply(rows.length ? `Дорогое: ${rows.join(', ')}` : 'Магазинов нет');
         break;
       }
 
