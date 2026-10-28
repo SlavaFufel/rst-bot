@@ -24,6 +24,21 @@ export function typeName(type) {
   return ENTITY_TYPE[type] ?? 'Entity';
 }
 
+const watchStmt = db.prepare('UPDATE devices SET watch = ? WHERE owner_user_id = ? AND entity_id = ? AND type = 3');
+const watchedStmt = db.prepare('SELECT entity_id, name FROM devices WHERE owner_user_id = ? AND type = 3 AND watch = 1');
+const monitorsStmt = db.prepare('SELECT entity_id, name, watch FROM devices WHERE owner_user_id = ? AND type = 3 ORDER BY name, entity_id');
+
+// Storage Monitor contents-change alerts (see features/storageWatch.js).
+export function setStorageWatch(ownerId, entityId, on) {
+  return watchStmt.run(on ? 1 : 0, ownerId, Number(entityId)).changes > 0;
+}
+export function watchedStorage(ownerId) {
+  return watchedStmt.all(ownerId);
+}
+export function storageMonitors(ownerId) {
+  return monitorsStmt.all(ownerId);
+}
+
 const allStorageStmt = db.prepare("SELECT owner_user_id, entity_id, name FROM devices WHERE type = 3");
 // All Storage Monitors across owners (for upkeep/decay polling).
 export function allStorageMonitors() {

@@ -33,6 +33,8 @@ export function migrate(db) {
     addColumn(db, 'users', 'lang', 'TEXT');
     // expires_at value the "renew soon" reminder was sent for (re-arms on extension).
     addColumn(db, 'licenses', 'renew_warned_for', 'INTEGER');
+    // Storage Monitor: notify the owner when the container's contents change (1=on).
+    addColumn(db, 'devices', 'watch', 'INTEGER NOT NULL DEFAULT 0');
     db.exec('COMMIT');
   } catch (err) {
     db.exec('ROLLBACK');

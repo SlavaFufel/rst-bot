@@ -21,6 +21,7 @@ const ROUTES = {
   [EVENTS.SERVER_UP]: { type: 'server', toGame: false },
   [EVENTS.ALARM]: { type: 'alarm', toGame: false },
   [EVENTS.AUTOMATION]: { type: 'auto', toGame: false },
+  [EVENTS.STORAGE_CHANGE]: { type: 'storage', toGame: false },
   [EVENTS.TIME_DAY]: { type: 'time', toGame: false },
   [EVENTS.TIME_NIGHT]: { type: 'time', toGame: false },
   [EVENTS.TIME_DAY_SOON]: { type: 'time', toGame: false },
@@ -70,7 +71,8 @@ export function createNotifier(bot, sessionManager) {
     if (!ruText) return;
     for (const uid of recipients) deliver(bot, uid, route.type, (lang) => fmt(event, payload, lang));
     // Mirror the alert into the in-game team chat when the owner has it enabled.
-    if (mirrorEnabled(session.ownerUserId)) session.sendToGame(ruText);
+    // Storage reports stay out of game chat: multi-line, and they'd tip off whoever is looting.
+    if (event !== EVENTS.STORAGE_CHANGE && mirrorEnabled(session.ownerUserId)) session.sendToGame(ruText);
 
     // Smart-home PRO: auto-apply a scene when the owner's Smart Alarm triggers.
     if (event === EVENTS.ALARM) {

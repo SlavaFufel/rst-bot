@@ -56,6 +56,7 @@ export class RustClient {
         this.bus.emit('entity:changed', {
           entityId: entityChanged.entityId,
           value: entityChanged.payload?.value,
+          items: entityChanged.payload?.items, // Storage Monitor contents
         });
       }
     });

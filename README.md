@@ -23,7 +23,7 @@ A Node.js Telegram bot that extends the official Rust+ Companion app. It keeps a
 * **Map and recon:** `/map` (team, oil rigs, recent deaths, in-game map notes, your pins), `/rustmap` (RustMaps link), `/whereis` (monument grid), `/pin`, `/deaths`, `/cam`, `/cams`
 * **Raid and RustLabs:** `/raid`, `/durability`, `/craft`, `/recycle`, `/decay`
 * **Players:** `/enemy add|stats|list|remove` (dossier via BattleMetrics and Steam), `/check` (VAC/smurf check), `/track`, `/online`
-* **Base (smart home):** `/devices`, `/switch`, `/storage`, `/find` (item search across all Storage Monitors), `/allon`, `/alloff`, `/scene`, `/scenes`, `/onraid` (scene applied when a Smart Alarm fires), `/auto` (automations, see below)
+* **Base (smart home):** `/devices`, `/switch`, `/storage`, `/find` (item search across all Storage Monitors), `/boxwatch` (alert with what was put in / taken out of a watched Storage Monitor, summarised 30 s after changes settle), `/allon`, `/alloff`, `/scene`, `/scenes`, `/onraid` (scene applied when a Smart Alarm fires), `/auto` (automations, see below)
 * **Journal:** `/note`, `/notes`, `/delnote`, `/pins`, `/unpin`, `/stats`
 * **Subscription and pairing:** `/buy`, `/redeem`, `/pair`, `/rebind`, `/repair`, `/family`, `/join`, `/leave`, `/paysupport`
 * **Admin:** `/genkey`, `/keys`, `/revoke`, `/payments`, `/refund`

@@ -36,6 +36,7 @@ const CATS = [
   { icon: '🏠', ru: 'База (умный дом)', en: 'Base (smart home)', cmds: [
     ['/devices · /switch «id» on|off · /storage «id»', 'устройства', 'devices'],
     ['/find «предмет»', 'в каких ящиках лежит _(по всем Storage Monitor)_', 'which containers hold it _(all Storage Monitors)_'],
+    ['/boxwatch «ящик» [off]', 'сообщать, что положили/забрали из ящика', 'report what was put in / taken out of a container'],
     ['/allon · /alloff', 'все свитчи', 'all switches'],
     ['/scene save|«имя» · /scenes · /onraid «сцена»', 'сцены', 'scenes'],
     ['/auto', 'автоматизации _(свет ночью, SAM при оффлайне тимы, таймер полива)_', 'automations _(lights at night, SAM when team offline, watering timer)_'],

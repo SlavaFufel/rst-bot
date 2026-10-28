@@ -23,6 +23,7 @@ export const EVENTS = Object.freeze({
   SERVER_UP: 'server_up',
   ALARM: 'alarm',
   AUTOMATION: 'automation',
+  STORAGE_CHANGE: 'storage_change',
   TIME_DAY: 'time_day',
   TIME_NIGHT: 'time_night',
   TIME_DAY_SOON: 'time_day_soon',
@@ -37,6 +38,7 @@ export const SUBSCRIBABLE = Object.freeze([
   { type: 'server', label: 'Сервер/вайп' },
   { type: 'alarm', label: 'Рейд-сигналка' },
   { type: 'auto', label: 'Автоматизации' },
+  { type: 'storage', label: 'Ящики (/boxwatch)' },
   { type: 'time', label: 'День/ночь' },
   { type: 'decay', label: 'Upkeep/декей базы' },
 ]);

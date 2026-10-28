@@ -20,7 +20,7 @@ import { renderProfile } from '../enemy/analytics.js';
 import { addEnemy, listEnemies, removeEnemy, findEnemy, getEnemy, getEnemySessions } from '../enemy/store.js';
 import { resolveBmServerId } from '../enemy/resolve.js';
 import { resolveSteamId, getSummary, getSummaries, getRustStats, getPlaytimeMinutes, renderSteamProfile, getBans, renderTrust } from '../enemy/steamstats.js';
-import { listDevices, typeName } from '../devices/store.js';
+import { listDevices, typeName, storageMonitors, setStorageWatch } from '../devices/store.js';
 import { saveScene, getScene, listScenes, deleteScene, setRaidScene, getRaidScene } from '../devices/scenes.js';
 import { addRule, listRules, countRules, deleteRule, setRuleEnabled, resolveTarget, MAX_RULES } from '../devices/automations.js';
 import { itemName, itemNameRu } from '../util/items.js';
@@ -1034,6 +1034,47 @@ export function createBot({ sessions }) {
     if (!r.hits.length) return ctx.reply(tl(ctx, `📦 ${name}: нет ни в одном из ${r.checked} ящиков.`, `📦 ${name}: not in any of ${r.checked} containers.`) + failed);
     const lines = r.hits.map((h) => `• ${h.name} — ${h.qty}`).join('\n');
     return ctx.reply(`📦 ${name} ×${r.total}\n${lines}${failed}`);
+  });
+
+  // Storage Monitor contents alerts: "/boxwatch <id|name> [off]". A name matches
+  // every monitor paired under it.
+  bot.command('boxwatch', async (ctx) => {
+    const owner = ctx.from.id;
+    const monitors = storageMonitors(owner);
+    const parts = ctx.match?.trim().split(/\s+/).filter(Boolean) ?? [];
+    if (!parts.length) {
+      if (!monitors.length) return ctx.reply(tl(ctx, 'Нет привязанных Storage Monitor. Привяжи в игре (Pair).', 'No paired Storage Monitors. Pair them in game.'));
+      const list = monitors.map((m) => `${m.watch ? '👁️' : '▫️'} ${m.entity_id} — ${m.name || `Storage ${m.entity_id}`}`).join('\n');
+      return ctx.reply(
+        tl(ctx, '📦 Слежка за ящиками (👁️ = включена):\n', '📦 Container alerts (👁️ = on):\n') +
+          list +
+          tl(
+            ctx,
+            '\n\n/boxwatch «id или имя» — сообщать, что положили/забрали\n/boxwatch «id или имя» off — выключить\nНа шкаф (TC) лучше не ставить: апкип списывается постоянно.',
+            '\n\n/boxwatch «id or name» — report what was put in / taken out\n/boxwatch «id or name» off — turn off\nBetter not on a TC: upkeep is consumed all the time.',
+          ),
+      );
+    }
+    if (blockViewer(ctx)) return undefined;
+    const on = !['off', 'выкл'].includes(parts[parts.length - 1].toLowerCase());
+    if (!on) parts.pop();
+    const target = parts.join(' ').toLowerCase();
+    const hits = monitors.filter((m) => String(m.entity_id) === target || (m.name ?? '').trim().toLowerCase() === target);
+    if (!hits.length) return ctx.reply(tl(ctx, `Ящик «${parts.join(' ')}» не найден. Список: /boxwatch`, `Container "${parts.join(' ')}" not found. List: /boxwatch`));
+
+    const session = sessions.sessionForUser(owner);
+    for (const m of hits) {
+      setStorageWatch(owner, m.entity_id, on);
+      if (!session) continue;
+      if (on) await session.storage.watch(m.entity_id);
+      else session.storage.unwatch(m.entity_id);
+    }
+    const names = hits.map((m) => m.name || `Storage ${m.entity_id}`).join(', ');
+    return ctx.reply(
+      on
+        ? tl(ctx, `👁️ Слежу: ${names}. Сообщу, что положили или забрали (сводка через 30 сек после изменений).`, `👁️ Watching: ${names}. I'll report what was put in or taken out (summary 30 s after changes).`)
+        : tl(ctx, `▫️ Больше не слежу: ${names}`, `▫️ Stopped watching: ${names}`),
+    );
   });
 
   bot.command('whereis', (ctx) => {

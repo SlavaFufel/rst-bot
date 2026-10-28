@@ -1,4 +1,16 @@
 import { EVENTS } from '../core/eventbus.js';
+import { itemName, itemNameRu } from '../util/items.js';
+
+const STORAGE_MAX_LINES = 10;
+
+// "📦 Склад\n➕ 500 Сера\n➖ 2 C4\n…ещё 3"
+function storageChange(p, lang) {
+  const name = (c) => (lang === 'en' ? itemName(c.itemId) : itemNameRu(c.itemId)) + (c.bp ? ' (BP)' : '');
+  const lines = p.changes.slice(0, STORAGE_MAX_LINES).map((c) => `${c.delta > 0 ? '➕' : '➖'} ${Math.abs(c.delta)} ${name(c)}`);
+  const more = p.changes.length - STORAGE_MAX_LINES;
+  if (more > 0) lines.push(lang === 'en' ? `…${more} more` : `…ещё ${more}`);
+  return `📦 ${p.name}\n${lines.join('\n')}`;
+}
 
 const AUTO_REASON_RU = { night: 'ночь', day: 'день', team_offline: 'тима оффлайн', team_online: 'тима онлайн' };
 const AUTO_REASON_EN = { night: 'night', day: 'day', team_offline: 'team offline', team_online: 'team online' };
@@ -61,6 +73,7 @@ const FORMATTERS = {
     ru: (p) => `🤖 Авто #${p.id}: ${p.target} → ${p.on ? 'ВКЛ' : 'ВЫКЛ'} (${AUTO_REASON_RU[p.reason] ?? p.reason})`,
     en: (p) => `🤖 Auto #${p.id}: ${p.target} → ${p.on ? 'ON' : 'OFF'} (${AUTO_REASON_EN[p.reason] ?? p.reason})`,
   },
+  [EVENTS.STORAGE_CHANGE]: { ru: (p) => storageChange(p, 'ru'), en: (p) => storageChange(p, 'en') },
   [EVENTS.TIME_DAY]: { ru: (p) => `🌅 Рассвет (в игре ${p.time})`, en: (p) => `🌅 Sunrise (in-game ${p.time})` },
   [EVENTS.TIME_NIGHT]: {
     ru: (p) => `🌙 Закат — наступает ночь (в игре ${p.time})`,

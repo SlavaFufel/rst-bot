@@ -8,6 +8,7 @@ import * as sessions from '../store/sessions.js';
 import { getDevice } from '../devices/store.js';
 import { renderMapImage } from './maprender.js';
 import { AutomationEngine } from '../devices/automationEngine.js';
+import { StorageWatch } from '../features/storageWatch.js';
 
 // Consecutive failed polls (invalid-token symptom) before we freeze the session.
 const AUTH_ERROR_THRESHOLD = 3;
@@ -31,6 +32,7 @@ export class RustSession {
     this.chat = new ChatBridge(this.client, this.bus);
     this.poller = new Poller(this.client, this.bus, this.id);
     this.automations = new AutomationEngine(this);
+    this.storage = new StorageWatch(this);
 
     this.bus.on('rust:connected', () => {
       this._startPolling().catch((e) => log.warn(`session ${this.id} startPolling:`, e.message));
@@ -61,6 +63,8 @@ export class RustSession {
     // Run init() on EVERY (re)connect: refreshes seed/map size/monuments, which
     // change after a server restart or wipe.
     await this.poller.init();
+    // Re-request watched Storage Monitors on every (re)connect: broadcasts are per connection.
+    this.storage.sync().catch((e) => log.warn(`session ${this.id} storage sync:`, e.message));
     if (this.pollingActive) return; // reconnect — intervals already running, don't double-start
     this.pollingActive = true;
     this.poller.start();
@@ -80,6 +84,7 @@ export class RustSession {
     this.pollingActive = false;
     this.poller.stop();
     this.automations.stop();
+    this.storage.reset();
     this.client.stop();
     log.warn(`Session ${this.id} frozen: ${kind}`);
     if (kind === 'disconnected') {
@@ -110,6 +115,7 @@ export class RustSession {
   stop() {
     this.poller.stop();
     this.automations.stop();
+    this.storage.reset();
     this.client.stop();
     this.bus.removeAllListeners();
     this.pollingActive = false;
