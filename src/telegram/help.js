@@ -36,6 +36,7 @@ const CATS = [
   { icon: '🏠', ru: 'База (умный дом)', en: 'Base (smart home)', cmds: [
     ['/devices · /switch «id» on|off · /storage «id»', 'устройства', 'devices'],
     ['/find «предмет»', 'в каких ящиках лежит _(по всем Storage Monitor)_', 'which containers hold it _(all Storage Monitors)_'],
+    ['/recyclebox «ящик|all» [сейф]', 'что даст переработка содержимого ящика', 'what recycling a container\'s contents gives'],
     ['/boxwatch «ящик» [off]', 'сообщать, что положили/забрали из ящика', 'report what was put in / taken out of a container'],
     ['/allon · /alloff', 'все свитчи', 'all switches'],
     ['/scene save|«имя» · /scenes · /onraid «сцена»', 'сцены', 'scenes'],
@@ -54,8 +55,8 @@ const CATS = [
 ];
 
 const INGAME = {
-  ru: '!pop · !time · !online · !team\n!locate [ник] · !nearby · !whereis «монумент» · !find «предмет»\n!teamstats · !playtime-all · !afktime-all · !deaths\n!promote [ник] · !wipe\n!raid «объект» · !durability «объект»\n!craft «n» «предмет» · !recycle «n» «предмет»\n!decay «hp» «объект»\n!check «SteamID»',
-  en: '!pop · !time · !online · !team\n!locate [name] · !nearby · !whereis «monument» · !find «item»\n!teamstats · !playtime-all · !afktime-all · !deaths\n!promote [name] · !wipe\n!raid «structure» · !durability «structure»\n!craft «n» «item» · !recycle «n» «item»\n!decay «hp» «structure»\n!check «SteamID»',
+  ru: '!pop · !time · !online · !team\n!locate [ник] · !nearby · !whereis «монумент» · !find «предмет»\n!teamstats · !playtime-all · !afktime-all · !deaths\n!promote [ник] · !wipe\n!raid «объект» · !durability «объект»\n!craft «n» «предмет» · !recycle «n» «предмет»\n!rbox «ящик» · !decay «hp» «объект»\n!check «SteamID»',
+  en: '!pop · !time · !online · !team\n!locate [name] · !nearby · !whereis «monument» · !find «item»\n!teamstats · !playtime-all · !afktime-all · !deaths\n!promote [name] · !wipe\n!raid «structure» · !durability «structure»\n!craft «n» «item» · !recycle «n» «item»\n!rbox «container» · !decay «hp» «structure»\n!check «SteamID»',
 };
 
 // Shown at the bottom of /help so users don't hunt for removed commands.

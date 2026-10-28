@@ -5,7 +5,7 @@ import { dayNight } from '../util/daynight.js';
 import { gridFromXY } from '../util/grid.js';
 import { findMonuments } from '../util/monuments.js';
 import { itemNameRu } from '../util/items.js';
-import { findInStorage } from '../features/storage.js';
+import { findInStorage, resolveMonitors, recycleStorage } from '../features/storage.js';
 import { resolveSteamId, getSummary, getBans, getRustStats, getPlaytimeMinutes } from '../enemy/steamstats.js';
 
 // "10 rocket" → { qty: 10, rest: 'rocket' }; "rocket" → { qty: 1, rest: 'rocket' }.
@@ -36,6 +36,7 @@ const HELP = [
   '!pop !time !online !team !locate [ник] !nearby !whereis <монумент> !find <предмет>',
   '!teamstats !playtime-all !afktime-all !deaths !promote [ник] !wipe !check <id>',
   '!raid <об> !durability <об> !craft <n> <предмет> !recycle <n> <предмет> !decay <hp> <об>',
+  '!rbox <ящик|all> [сейф] — что даст переработка ящика',
 ];
 
 // Commands that read map markers (events, vending machines). Facepunch stopped
@@ -132,6 +133,19 @@ export async function handleInGameCommand(session, teamMessage) {
         if (!r.checked) return reply('Нет привязанных Storage Monitor');
         if (!r.hits.length) return reply(`${itemNameRu(r.itemId)}: нет в ящиках`);
         reply(packLine(`${itemNameRu(r.itemId)} ×${r.total}:`, r.hits.map((h) => `${h.name} ${h.qty}`)));
+        break;
+      }
+
+      case 'rbox':
+      case 'recyclebox': {
+        const safe = /(^|\s)(safe|сейф|мирка)$/i.test(arg);
+        const box = arg.replace(/(^|\s)(safe|сейф|мирка)$/i, '').trim();
+        if (!box) return reply('Напр.: !rbox компоненты (или all)');
+        const monitors = resolveMonitors(session.ownerUserId, box);
+        if (!monitors.length) return reply(`Нет ящика «${box}»`);
+        const r = await recycleStorage(session, monitors, safe);
+        if (!r.yields.length) return reply('Перерабатывать нечего');
+        reply(packLine(safe ? 'Переработка (мирка):' : 'Переработка:', r.yields.map((y) => `${itemNameRu(y.itemId)} ${y.approx ? '~' : ''}${y.qty}`)));
         break;
       }
 

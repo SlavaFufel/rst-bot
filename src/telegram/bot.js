@@ -25,7 +25,7 @@ import { saveScene, getScene, listScenes, deleteScene, setRaidScene, getRaidScen
 import { addRule, listRules, countRules, deleteRule, setRuleEnabled, resolveTarget, MAX_RULES } from '../devices/automations.js';
 import { itemName, itemNameRu } from '../util/items.js';
 import { findMonuments } from '../util/monuments.js';
-import { findInStorage } from '../features/storage.js';
+import { findInStorage, resolveMonitors, recycleStorage } from '../features/storage.js';
 import { gridCenterXY } from '../util/grid.js';
 import { dayNight, dayNightLabel } from '../util/daynight.js';
 import { addCamera, listCameras, removeCamera, resolveCamera } from '../features/cameras.js';
@@ -1058,8 +1058,7 @@ export function createBot({ sessions }) {
     if (blockViewer(ctx)) return undefined;
     const on = !['off', 'выкл'].includes(parts[parts.length - 1].toLowerCase());
     if (!on) parts.pop();
-    const target = parts.join(' ').toLowerCase();
-    const hits = monitors.filter((m) => String(m.entity_id) === target || (m.name ?? '').trim().toLowerCase() === target);
+    const hits = resolveMonitors(owner, parts.join(' '));
     if (!hits.length) return ctx.reply(tl(ctx, `Ящик «${parts.join(' ')}» не найден. Список: /boxwatch`, `Container "${parts.join(' ')}" not found. List: /boxwatch`));
 
     const session = sessions.sessionForUser(owner);
@@ -1074,6 +1073,37 @@ export function createBot({ sessions }) {
       on
         ? tl(ctx, `👁️ Слежу: ${names}. Сообщу, что положили или забрали (сводка через 30 сек после изменений).`, `👁️ Watching: ${names}. I'll report what was put in or taken out (summary 30 s after changes).`)
         : tl(ctx, `▫️ Больше не слежу: ${names}`, `▫️ Stopped watching: ${names}`),
+    );
+  });
+
+  // What recycling a container's contents would give: "/recyclebox <id|name|all> [safe]".
+  bot.command(['recyclebox', 'rbox'], async (ctx) => {
+    const lang = uiLang(ctx);
+    const nm = (id) => esc(lang === 'en' ? itemName(id) : itemNameRu(id));
+    let arg = ctx.match?.trim() ?? '';
+    const safe = /(^|\s)(safe|сейф|мирка)$/i.test(arg);
+    arg = arg.replace(/(^|\s)(safe|сейф|мирка)$/i, '').trim();
+    if (!arg) return ctx.reply(tl(ctx, 'Использование: /recyclebox «id, имя ящика или all» [сейф]\nНапр.: /recyclebox Компоненты', 'Usage: /recyclebox «id, container name or all» [safe]\nE.g.: /recyclebox Components'));
+    const session = sessions.sessionForUser(ctx.from.id);
+    if (!session) return ctx.reply(tl(ctx, 'Нет активной сессии.', 'No active session.'));
+    const monitors = resolveMonitors(session.ownerUserId, arg);
+    if (!monitors.length) return ctx.reply(tl(ctx, `Ящик «${arg}» не найден. Список: /boxwatch`, `Container "${arg}" not found. List: /boxwatch`));
+    const r = await recycleStorage(session, monitors, safe);
+    const failed = r.failed ? tl(ctx, `\n⚠️ Не ответили: ${r.failed}`, `\n⚠️ Did not respond: ${r.failed}`) : '';
+    if (!r.inputs.length) return ctx.reply(tl(ctx, '♻️ Перерабатывать нечего.', '♻️ Nothing to recycle.') + failed);
+    const which = safe ? tl(ctx, 'переработчик в мирной зоне', 'safe-zone recycler') : tl(ctx, 'обычный переработчик', 'standard recycler');
+    const ins = r.inputs.slice(0, 8).map((i) => `${nm(i.itemId)} ×${numFmt(i.qty)}`).join(', ') + (r.inputs.length > 8 ? ' …' : '');
+    const outs = r.yields.map((y) => `• ${nm(y.itemId)} ${y.approx ? '≈' : '×'}${numFmt(y.qty)}`).join('\n');
+    const notes = [
+      r.yields.some((y) => y.approx) ? tl(ctx, '≈ — в среднем, выход с шансом', '≈ — average, chance-based output') : '',
+      r.skipped ? tl(ctx, `не перерабатывается: ${r.skipped} вид(ов)`, `not recyclable: ${r.skipped} kind(s)`) : '',
+    ].filter(Boolean).join(' · ');
+    return ctx.reply(
+      `♻️ <b>${tl(ctx, 'Переработка', 'Recycling')}</b> → <i>${which}</i>\n` +
+        `<i>${ins}</i>\n${panel(outs)}` +
+        (notes ? `\n<i>${notes}</i>` : '') +
+        failed,
+      HTML,
     );
   });
 
