@@ -1,5 +1,8 @@
 import { EVENTS } from '../core/eventbus.js';
 
+const AUTO_REASON_RU = { night: 'ночь', day: 'день', team_offline: 'тима оффлайн', team_online: 'тима онлайн' };
+const AUTO_REASON_EN = { night: 'night', day: 'day', team_offline: 'team offline', team_online: 'team online' };
+
 // Bilingual alert formatters: { ru, en }. fmt(event, payload, lang) renders in
 // the recipient's language (notifier picks lang per user); the in-game team-chat
 // mirror always passes 'ru'.
@@ -53,6 +56,10 @@ const FORMATTERS = {
   [EVENTS.ALARM]: {
     ru: (p) => `🚨 РЕЙД-СИГНАЛКА: ${p.title ?? 'Smart Alarm'} — ${p.message ?? ''}`,
     en: (p) => `🚨 RAID ALARM: ${p.title ?? 'Smart Alarm'} — ${p.message ?? ''}`,
+  },
+  [EVENTS.AUTOMATION]: {
+    ru: (p) => `🤖 Авто #${p.id}: ${p.target} → ${p.on ? 'ВКЛ' : 'ВЫКЛ'} (${AUTO_REASON_RU[p.reason] ?? p.reason})`,
+    en: (p) => `🤖 Auto #${p.id}: ${p.target} → ${p.on ? 'ON' : 'OFF'} (${AUTO_REASON_EN[p.reason] ?? p.reason})`,
   },
   [EVENTS.TIME_DAY]: { ru: (p) => `🌅 Рассвет (в игре ${p.time})`, en: (p) => `🌅 Sunrise (in-game ${p.time})` },
   [EVENTS.TIME_NIGHT]: {

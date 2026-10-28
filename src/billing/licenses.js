@@ -89,7 +89,7 @@ export function rebind(telegramId) {
 export function checkAndBind(telegramId, playerId, { isAdmin = false } = {}) {
   if (isAdmin) return { allowed: true };
   const lic = activeLicenseByUser(telegramId);
-  if (!lic) return { allowed: false, reason: 'Нет активной подписки. /redeem <ключ>', reasonEn: 'No active subscription. /redeem <key>' };
+  if (!lic) return { allowed: false, reason: 'Нет активной подписки. /buy или /redeem <ключ>', reasonEn: 'No active subscription. /buy or /redeem <key>' };
   if (lic.account_player_id == null) {
     bindAccount(lic.key, playerId);
     return { allowed: true };
@@ -107,4 +107,41 @@ export function expireDue() {
 
 export function listKeys() {
   return listStmt.all();
+}
+
+const extendStmt = db.prepare('UPDATE licenses SET expires_at = ? WHERE key = ?');
+const renewDueStmt = db.prepare(`
+  SELECT key, redeemed_by, expires_at FROM licenses
+  WHERE status = 'active' AND expires_at IS NOT NULL AND expires_at BETWEEN ? AND ?
+    AND (renew_warned_for IS NULL OR renew_warned_for != expires_at)
+`);
+const markWarnedStmt = db.prepare('UPDATE licenses SET renew_warned_for = expires_at WHERE key = ?');
+
+// Active subscriptions ending within `withinMs` that haven't been reminded for
+// their current expiry yet. Marks them reminded. Returns [{ redeemed_by, expires_at }].
+export function renewDue(withinMs) {
+  const now = Date.now();
+  const due = renewDueStmt.all(now, now + withinMs);
+  for (const row of due) markWarnedStmt.run(row.key);
+  return due;
+}
+
+// Paid time (Telegram Stars): extend the active subscription, or start a new one.
+// Extending keeps the bound Rust account. Returns the resulting license, or null
+// if the user already has a lifetime license (nothing to extend).
+export function grantDays(telegramId, days, name, plan = 'stars') {
+  const lic = activeLicenseByUser(telegramId);
+  if (lic && lic.expires_at == null) return null;
+  if (lic) {
+    extendStmt.run(lic.expires_at + days * DAY_MS, lic.key);
+    return getStmt.get(lic.key);
+  }
+  return redeem(genKey({ plan, durationDays: days }), telegramId, name).license;
+}
+
+// Refund: take the paid days back off the active subscription (never below now).
+export function revokeDays(telegramId, days) {
+  const lic = activeLicenseByUser(telegramId);
+  if (!lic || lic.expires_at == null) return;
+  extendStmt.run(Math.max(Date.now(), lic.expires_at - days * DAY_MS), lic.key);
 }

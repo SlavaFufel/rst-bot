@@ -7,6 +7,7 @@ import { EVENTS } from '../core/eventbus.js';
 import * as sessions from '../store/sessions.js';
 import { getDevice } from '../devices/store.js';
 import { renderMapImage } from './maprender.js';
+import { AutomationEngine } from '../devices/automationEngine.js';
 
 // Consecutive failed polls (invalid-token symptom) before we freeze the session.
 const AUTH_ERROR_THRESHOLD = 3;
@@ -29,6 +30,7 @@ export class RustSession {
     this.client = new RustClient(creds, this.bus);
     this.chat = new ChatBridge(this.client, this.bus);
     this.poller = new Poller(this.client, this.bus, this.id);
+    this.automations = new AutomationEngine(this);
 
     this.bus.on('rust:connected', () => {
       this._startPolling().catch((e) => log.warn(`session ${this.id} startPolling:`, e.message));
@@ -62,6 +64,7 @@ export class RustSession {
     if (this.pollingActive) return; // reconnect — intervals already running, don't double-start
     this.pollingActive = true;
     this.poller.start();
+    this.automations.start();
   }
 
   _setState(state) {
@@ -76,6 +79,7 @@ export class RustSession {
     this._setState(state);
     this.pollingActive = false;
     this.poller.stop();
+    this.automations.stop();
     this.client.stop();
     log.warn(`Session ${this.id} frozen: ${kind}`);
     if (kind === 'disconnected') {
@@ -105,6 +109,7 @@ export class RustSession {
 
   stop() {
     this.poller.stop();
+    this.automations.stop();
     this.client.stop();
     this.bus.removeAllListeners();
     this.pollingActive = false;
@@ -113,6 +118,7 @@ export class RustSession {
   isConnected() { return this.client.connected; }
   mapSize() { return this.poller.mapSize; }
   seed() { return this.poller.lastSeed; }
+  monuments() { return this.poller.monuments; }
   getInfo() { return this.client.getInfo(); }
   getTime() { return this.client.getTime(); }
   getTeamInfo() { return this.client.getTeamInfo(); }

@@ -161,6 +161,9 @@ export class Poller {
       });
     }
     this.lastTeamPollAt = now;
+    // Level signal for automations (team offline/online rules).
+    const members = team.members ?? [];
+    this.bus.emit('team:state', { online: members.filter((m) => m.isOnline).length, total: members.length });
     if (this.sessionId != null && now - this.lastStatsFlush >= STATS_FLUSH_MS) {
       this.lastStatsFlush = now;
       saveTeamStats(this.sessionId, this.statsWipe, this.stats);

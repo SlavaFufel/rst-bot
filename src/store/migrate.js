@@ -31,6 +31,8 @@ export function migrate(db) {
     addColumn(db, 'users', 'raid_scene', 'TEXT');
     // UI language: 'ru' | 'en' | null (null = not chosen yet → show picker).
     addColumn(db, 'users', 'lang', 'TEXT');
+    // expires_at value the "renew soon" reminder was sent for (re-arms on extension).
+    addColumn(db, 'licenses', 'renew_warned_for', 'INTEGER');
     db.exec('COMMIT');
   } catch (err) {
     db.exec('ROLLBACK');

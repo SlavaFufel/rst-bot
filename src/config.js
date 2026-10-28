@@ -11,6 +11,15 @@ function optional(name, fallback = undefined) {
   return value === undefined || value === '' ? fallback : value;
 }
 
+// "30:300,90:800" → [{ days: 30, stars: 300 }, { days: 90, stars: 800 }].
+function parsePlans(raw) {
+  return (raw ?? '')
+    .split(',')
+    .map((part) => part.trim().split(':').map(Number))
+    .filter(([days, stars]) => Number.isInteger(days) && days > 0 && Number.isInteger(stars) && stars > 0)
+    .map(([days, stars]) => ({ days, stars }));
+}
+
 function parseIds(raw) {
   return (raw ?? '')
     .split(',')
@@ -45,6 +54,11 @@ export const config = Object.freeze({
   },
   helper: {
     url: optional('HELPER_DOWNLOAD_URL'), // where users download the pairing helper
+  },
+  // Subscription plans sold for Telegram Stars via /buy ("days:stars,..."),
+  // or STARS_PLANS=off to hide /buy.
+  stars: {
+    plans: optional('STARS_PLANS', '30:300,90:800') === 'off' ? [] : parsePlans(optional('STARS_PLANS', '30:300,90:800')),
   },
   battlemetrics: {
     token: optional('BATTLEMETRICS_TOKEN'),

@@ -182,6 +182,32 @@ CREATE TABLE IF NOT EXISTS scenes (
   PRIMARY KEY (owner_user_id, name)
 );
 
+-- Telegram Stars payments for subscriptions (/buy). charge_id is Telegram's
+-- telegram_payment_charge_id — unique, needed for refunds.
+CREATE TABLE IF NOT EXISTS payments (
+  charge_id   TEXT PRIMARY KEY,
+  telegram_id INTEGER NOT NULL,
+  stars       INTEGER NOT NULL,
+  days        INTEGER NOT NULL,
+  status      TEXT NOT NULL DEFAULT 'paid',   -- paid | refunded
+  created_at  INTEGER NOT NULL
+);
+
+-- Smart-switch automations per owner (see devices/automations.js).
+-- kind (trigger): night | offline | online | timer. target: switch entity id or device
+-- name (a name addresses every switch paired under it, i.e. a group).
+-- params: JSON — { invert, delayMin } or { onMin, offMin } for timer.
+CREATE TABLE IF NOT EXISTS automations (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  owner_user_id INTEGER NOT NULL,
+  kind          TEXT NOT NULL,
+  target        TEXT NOT NULL,
+  params        TEXT NOT NULL DEFAULT '{}',
+  enabled       INTEGER NOT NULL DEFAULT 1,
+  created_at    INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_automations_owner ON automations (owner_user_id);
+
 -- Vending price snapshots for the former /pricehistory. Unused since Rust+ stopped
 -- sending map markers (2026-08-06); kept so existing databases still open cleanly.
 CREATE TABLE IF NOT EXISTS price_history (

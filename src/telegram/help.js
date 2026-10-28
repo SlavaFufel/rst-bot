@@ -18,6 +18,7 @@ const CATS = [
     ['/rustmap', 'детальная карта сервера (RustMaps)', 'detailed server map (RustMaps)'],
     ['/pin «грид» «текст»', 'поставить метку на карту _(видно в /map)_', 'drop a labelled map pin _(shown in /map)_'],
     ['/deaths', 'последние 5 мест смерти тимы (гриды)', 'last 5 team death spots (grids)'],
+    ['/whereis «монумент»', 'где монумент _(напр. /whereis аэропорт)_', 'where a monument is _(e.g. /whereis airfield)_'],
     ['/cam «имя» · /cams', 'камеры', 'cameras'],
   ] },
   { icon: '🧨', ru: 'Рейд и RustLabs', en: 'Raid & RustLabs', cmds: [
@@ -34,8 +35,10 @@ const CATS = [
   ] },
   { icon: '🏠', ru: 'База (умный дом)', en: 'Base (smart home)', cmds: [
     ['/devices · /switch «id» on|off · /storage «id»', 'устройства', 'devices'],
+    ['/find «предмет»', 'в каких ящиках лежит _(по всем Storage Monitor)_', 'which containers hold it _(all Storage Monitors)_'],
     ['/allon · /alloff', 'все свитчи', 'all switches'],
     ['/scene save|«имя» · /scenes · /onraid «сцена»', 'сцены', 'scenes'],
+    ['/auto', 'автоматизации _(свет ночью, SAM при оффлайне тимы, таймер полива)_', 'automations _(lights at night, SAM when team offline, watering timer)_'],
   ] },
   { icon: '📝', ru: 'Журнал', en: 'Journal', cmds: [
     ['/note «текст» · /notes · /delnote «id»', 'заметки', 'notes'],
@@ -43,14 +46,15 @@ const CATS = [
     ['/stats', 'события сессии', 'session events'],
   ] },
   { icon: '🔑', ru: 'Подписка и привязка', en: 'Subscription & pairing', cmds: [
+    ['/buy', 'купить или продлить подписку за ⭐ Stars', 'buy or extend the subscription with ⭐ Stars'],
     ['/redeem «ключ» · /pair · /rebind · /repair', 'доступ и привязка _(только владелец)_', 'access & pairing _(owner only)_'],
     ['/family · /join «код» · /leave', 'семья: владелец + до 4 наблюдателей в TG', 'family: owner + up to 4 TG viewers'],
   ] },
 ];
 
 const INGAME = {
-  ru: '!pop · !time · !online · !team\n!teamstats · !playtime-all · !afktime-all · !deaths\n!promote [ник] · !wipe\n!raid «объект» · !durability «объект»\n!craft «n» «предмет» · !recycle «n» «предмет»\n!decay «hp» «объект»\n!check «SteamID»',
-  en: '!pop · !time · !online · !team\n!teamstats · !playtime-all · !afktime-all · !deaths\n!promote [name] · !wipe\n!raid «structure» · !durability «structure»\n!craft «n» «item» · !recycle «n» «item»\n!decay «hp» «structure»\n!check «SteamID»',
+  ru: '!pop · !time · !online · !team\n!locate [ник] · !nearby · !whereis «монумент» · !find «предмет»\n!teamstats · !playtime-all · !afktime-all · !deaths\n!promote [ник] · !wipe\n!raid «объект» · !durability «объект»\n!craft «n» «предмет» · !recycle «n» «предмет»\n!decay «hp» «объект»\n!check «SteamID»',
+  en: '!pop · !time · !online · !team\n!locate [name] · !nearby · !whereis «monument» · !find «item»\n!teamstats · !playtime-all · !afktime-all · !deaths\n!promote [name] · !wipe\n!raid «structure» · !durability «structure»\n!craft «n» «item» · !recycle «n» «item»\n!decay «hp» «structure»\n!check «SteamID»',
 };
 
 // Shown at the bottom of /help so users don't hunt for removed commands.
@@ -67,14 +71,14 @@ const PLACEHOLDER_EN = {
   'текст': 'text', 'предмет': 'item', 'валюта': 'currency', 'имя': 'name',
   'ссылка': 'link', 'объект': 'structure', 'кол-во': 'qty', 'сцена': 'scene',
   'ключ': 'key', 'грид': 'grid', 'клетка': 'cell', 'дней': 'days', 'план': 'plan',
-  'цена': 'price',
+  'цена': 'price', 'монумент': 'monument',
 };
 const usageFor = (u, en) =>
   en ? u.replace(/[А-Яа-яЁё][А-Яа-яЁё-]*/g, (w) => PLACEHOLDER_EN[w.toLowerCase()] ?? w) : u;
 
 const ADMIN = {
-  ru: '/genkey [дней] [план] — создать ключ подписки\n/keys — список ключей\n/revoke «ключ» — отозвать ключ',
-  en: '/genkey [days] [plan] — create a subscription key\n/keys — list keys\n/revoke «key» — revoke a key',
+  ru: '/genkey [дней] [план] — создать ключ подписки\n/keys — список ключей\n/revoke «ключ» — отозвать ключ\n/payments — последние оплаты Stars\n/refund «charge_id» — вернуть оплату',
+  en: '/genkey [days] [plan] — create a subscription key\n/keys — list keys\n/revoke «key» — revoke a key\n/payments — recent Stars payments\n/refund «charge_id» — refund a payment',
 };
 
 const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');

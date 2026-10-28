@@ -18,6 +18,7 @@ const DICT = {
     en: 'Server and team monitoring, smart home, raid calculator, cameras and player tracking — right inside Telegram.',
   },
   start_redeem: { ru: 'Есть ключ? Активируй:', en: 'Have a key? Redeem it:' },
+  start_buy: { ru: 'Купить подписку за ⭐ Stars:', en: 'Buy a subscription with ⭐ Stars:' },
   start_help: { ru: 'Все команды:', en: 'All commands:' },
   start_disclaimer: {
     ru: 'Неофициальный инструмент на базе Rust+ Companion API. Используя бота, ты действуешь на свой риск.',

@@ -5,7 +5,8 @@ import { db } from '../store/db.js';
 import { SUBSCRIBABLE } from '../core/eventbus.js';
 import { createGate } from '../access/gate.js';
 import { isAdmin, displayName, mirrorEnabled, setMirror, getLang, setLang, getUser, ensureUser, langOf } from '../access/users.js';
-import { genKey, redeem, revoke, rebind, activeLicenseByUser, listKeys } from '../billing/licenses.js';
+import { genKey, redeem, revoke, rebind, activeLicenseByUser, listKeys, grantDays, revokeDays } from '../billing/licenses.js';
+import { plans as starPlans, invoicePayload, planFromPayload, recordPayment, getPayment, markRefunded, recentPayments } from '../billing/payments.js';
 import { issueCode } from '../pair/codes.js';
 import {
   addMember, removeMember, listMembers, countMembers, ownerForViewer,
@@ -21,7 +22,10 @@ import { resolveBmServerId } from '../enemy/resolve.js';
 import { resolveSteamId, getSummary, getSummaries, getRustStats, getPlaytimeMinutes, renderSteamProfile, getBans, renderTrust } from '../enemy/steamstats.js';
 import { listDevices, typeName } from '../devices/store.js';
 import { saveScene, getScene, listScenes, deleteScene, setRaidScene, getRaidScene } from '../devices/scenes.js';
-import { itemName } from '../util/items.js';
+import { addRule, listRules, countRules, deleteRule, setRuleEnabled, resolveTarget, MAX_RULES } from '../devices/automations.js';
+import { itemName, itemNameRu } from '../util/items.js';
+import { findMonuments } from '../util/monuments.js';
+import { findInStorage } from '../features/storage.js';
 import { gridCenterXY } from '../util/grid.js';
 import { dayNight, dayNightLabel } from '../util/daynight.js';
 import { addCamera, listCameras, removeCamera, resolveCamera } from '../features/cameras.js';
@@ -70,6 +74,7 @@ const sendLangPicker = (ctx) =>
 // Localised welcome screen (HTML).
 const startText = (lang) =>
   `🤖 <b>${t(lang, 'start_title')}</b>\n${t(lang, 'start_tagline')}\n\n` +
+  (starPlans().length ? `💳 ${t(lang, 'start_buy')} /buy\n` : '') +
   `▶️ ${t(lang, 'start_redeem')} /redeem «key»\n` +
   `📋 ${t(lang, 'start_help')} /help\n\n` +
   `ℹ️ ${t(lang, 'start_disclaimer')}`;
@@ -113,6 +118,7 @@ export function createBot({ sessions }) {
   // even not-yet-subscribed users pick a language first.
   bot.use((ctx, next) => {
     if (ctx.callbackQuery?.data?.startsWith('lang:')) return next();
+    if (ctx.preCheckoutQuery || ctx.message?.successful_payment) return next(); // never block a payment
     const id = ctx.from?.id;
     if (id && !getLang(id)) return sendLangPicker(ctx);
     return next();
@@ -148,9 +154,112 @@ export function createBot({ sessions }) {
     );
   });
 
+  // --- Sales: subscription for Telegram Stars (XTR, no payment provider needed) ---
+  const planLabel = (ctx, p) => tl(ctx, `${p.days} дн. — ${p.stars} ⭐`, `${p.days} days — ${p.stars} ⭐`);
+
+  bot.command('buy', (ctx) => {
+    const list = starPlans();
+    if (!list.length) return ctx.reply(tl(ctx, 'Оплата сейчас недоступна. Ключ можно получить у админа: /redeem <ключ>', 'Payments are unavailable right now. Get a key from the admin: /redeem <key>'));
+    const lic = activeLicenseByUser(ctx.from.id);
+    if (lic && lic.expires_at == null) return ctx.reply(tl(ctx, '✅ У тебя бессрочная подписка — продлевать не нужно.', '✅ You have a lifetime subscription — nothing to renew.'));
+    const kb = new InlineKeyboard();
+    for (const p of list) kb.text(planLabel(ctx, p), `buy:${p.days}`).row();
+    const head = lic
+      ? tl(ctx, `Подписка активна до ${formatExpiry(lic.expires_at, 'ru')}. Купленные дни добавятся к ней.`, `Subscription active until ${formatExpiry(lic.expires_at, 'en')}. Bought days are added on top.`)
+      : tl(ctx, 'Выбери срок подписки. Оплата — Telegram Stars прямо в чате.', 'Pick a subscription length. Pay with Telegram Stars right in the chat.');
+    return ctx.reply(`💳 ${head}`, { reply_markup: kb });
+  });
+
+  bot.callbackQuery(/^buy:(\d+)$/, async (ctx) => {
+    const plan = starPlans().find((p) => p.days === Number(ctx.match[1]));
+    await ctx.answerCallbackQuery();
+    if (!plan) return ctx.reply(tl(ctx, 'Этот тариф больше не продаётся. /buy — актуальные.', 'This plan is no longer sold. /buy — current plans.'));
+    return ctx.replyWithInvoice(
+      tl(ctx, `Rust+ бот — ${plan.days} дн.`, `Rust+ Bot — ${plan.days} days`),
+      tl(ctx, 'Подписка: уведомления, тим-чат, умный дом, автоматизации, разведка. Дни добавляются к текущей подписке.', 'Subscription: alerts, team chat, smart home, automations, recon. Days are added to your current subscription.'),
+      invoicePayload(plan),
+      'XTR',
+      [{ label: planLabel(ctx, plan), amount: plan.stars }],
+    );
+  });
+
+  // Last check before Telegram charges: the plan must still exist at this price.
+  bot.on('pre_checkout_query', (ctx) => {
+    const q = ctx.preCheckoutQuery;
+    const plan = planFromPayload(q.invoice_payload);
+    if (plan && q.currency === 'XTR' && q.total_amount === plan.stars) return ctx.answerPreCheckoutQuery(true);
+    return ctx.answerPreCheckoutQuery(false, {
+      error_message: tl(ctx, 'Тариф изменился — открой /buy заново.', 'The plan has changed — open /buy again.'),
+    });
+  });
+
+  bot.on('message:successful_payment', async (ctx) => {
+    const sp = ctx.message.successful_payment;
+    // Days come from what was actually paid for, not the current config.
+    const days = Number(/^sub:(\d+):/.exec(sp.invoice_payload)?.[1]);
+    if (!days) return log.warn(`Unknown payment payload: ${sp.invoice_payload}`);
+    if (!recordPayment(sp.telegram_payment_charge_id, ctx.from.id, sp.total_amount, days)) return undefined; // duplicate
+    const lic = grantDays(ctx.from.id, days, displayName(ctx));
+    log.info(`Stars payment: ${ctx.from.id} paid ${sp.total_amount}⭐ for ${days}d (${sp.telegram_payment_charge_id})`);
+    if (config.telegram.adminId && config.telegram.adminId !== ctx.from.id) {
+      bot.api
+        .sendMessage(config.telegram.adminId, `💰 ${displayName(ctx)} (${ctx.from.id}): ${sp.total_amount}⭐ → ${days} дн.\n<code>${esc(sp.telegram_payment_charge_id)}</code>`, HTML)
+        .catch(() => {});
+    }
+    if (!lic) {
+      return ctx.reply(tl(ctx, 'Оплата получена, но у тебя бессрочная подписка. Напиши /paysupport — вернём звёзды.', 'Payment received, but you already have a lifetime subscription. Use /paysupport and we will refund the Stars.'));
+    }
+    sessions.resume(ctx.from.id); // renewal after a lapse un-freezes the session
+    const paired = sessions.byOwner.has(ctx.from.id);
+    return ctx.reply(
+      tl(
+        ctx,
+        `✅ Спасибо! Подписка активна до ${formatExpiry(lic.expires_at, 'ru')}.` + (paired ? '' : '\nДальше: /pair — привязать Rust+, затем зайди на сервер и нажми «Pair with Server».'),
+        `✅ Thank you! Subscription active until ${formatExpiry(lic.expires_at, 'en')}.` + (paired ? '' : '\nNext: /pair — pair Rust+, then join the server and press "Pair with Server".'),
+      ),
+    );
+  });
+
+  // Telegram requires bots that sell for Stars to answer /paysupport.
+  bot.command('paysupport', (ctx) =>
+    ctx.reply(
+      tl(
+        ctx,
+        `💬 Вопросы по оплате и возвраты: напиши админу${config.telegram.adminId ? ` (tg://user?id=${config.telegram.adminId})` : ''}. Укажи дату оплаты — возврат делаем в Stars.`,
+        `💬 Payment questions and refunds: contact the admin${config.telegram.adminId ? ` (tg://user?id=${config.telegram.adminId})` : ''}. Include the payment date — refunds are made in Stars.`,
+      ),
+    ),
+  );
+
+  bot.command('payments', (ctx) => {
+    if (!isAdmin(ctx.from.id)) return ctx.reply(tl(ctx, 'Только для админа.', 'Admins only.'));
+    const rows = recentPayments();
+    if (!rows.length) return ctx.reply(tl(ctx, 'Оплат пока нет.', 'No payments yet.'));
+    const lines = rows.map((p) => `${p.status === 'refunded' ? '↩️' : '💰'} ${new Date(p.created_at).toLocaleDateString('ru-RU')} ${p.telegram_id} — ${p.stars}⭐ / ${p.days}d\n<code>${esc(p.charge_id)}</code>`);
+    return ctx.reply(lines.join('\n'), HTML);
+  });
+
+  bot.command('refund', async (ctx) => {
+    if (!isAdmin(ctx.from.id)) return ctx.reply(tl(ctx, 'Только для админа.', 'Admins only.'));
+    const chargeId = ctx.match?.trim();
+    if (!chargeId) return ctx.reply(tl(ctx, 'Использование: /refund <charge_id> (из /payments)', 'Usage: /refund <charge_id> (from /payments)'));
+    const p = getPayment(chargeId);
+    if (!p) return ctx.reply(tl(ctx, 'Оплата не найдена.', 'Payment not found.'));
+    if (p.status === 'refunded') return ctx.reply(tl(ctx, 'Уже возвращено.', 'Already refunded.'));
+    try {
+      await bot.api.refundStarPayment(p.telegram_id, chargeId);
+    } catch (err) {
+      return ctx.reply(tl(ctx, 'Telegram отказал в возврате: ', 'Telegram rejected the refund: ') + err.message);
+    }
+    markRefunded(chargeId);
+    revokeDays(p.telegram_id, p.days);
+    bot.api.sendMessage(p.telegram_id, L(langOf(p.telegram_id), `↩️ Возврат ${p.stars}⭐ выполнен, ${p.days} дн. сняты с подписки.`, `↩️ Refunded ${p.stars}⭐, ${p.days} days removed from your subscription.`)).catch(() => {});
+    return ctx.reply(tl(ctx, `↩️ Возвращено ${p.stars}⭐ пользователю ${p.telegram_id}.`, `↩️ Refunded ${p.stars}⭐ to ${p.telegram_id}.`));
+  });
+
   bot.command('sub', (ctx) => {
     const lic = activeLicenseByUser(ctx.from.id);
-    if (!lic) return ctx.reply(tl(ctx, 'Активной подписки нет. Активируй ключ: /redeem <ключ>', 'No active subscription. Activate a key: /redeem <key>'));
+    if (!lic) return ctx.reply(tl(ctx, 'Активной подписки нет. Купить: /buy · активировать ключ: /redeem <ключ>', 'No active subscription. Buy: /buy · activate a key: /redeem <key>'));
     const left = lic.expires_at
       ? `${Math.max(0, Math.ceil((lic.expires_at - Date.now()) / 86_400_000))} ${tl(ctx, 'дн.', 'd.')}`
       : '∞';
@@ -282,7 +391,7 @@ export function createBot({ sessions }) {
   bot.command('pair', (ctx) => {
     if (blockViewer(ctx)) return;
     if (!isAdmin(ctx.from.id) && !activeLicenseByUser(ctx.from.id)) {
-      return ctx.reply(tl(ctx, 'Сначала активируй подписку: /redeem <ключ>', 'Activate a subscription first: /redeem <key>'));
+      return ctx.reply(tl(ctx, 'Сначала оформи подписку: /buy или /redeem <ключ>', 'Get a subscription first: /buy or /redeem <key>'));
     }
     const code = issueCode(ctx.from.id);
     const download = config.helper.url || tl(ctx, '(ссылка на помощник появится позже)', '(helper link coming soon)');
@@ -911,6 +1020,34 @@ export function createBot({ sessions }) {
     }
   });
 
+  // Item search across every paired Storage Monitor.
+  bot.command('find', async (ctx) => {
+    const q = ctx.match?.trim();
+    if (!q) return ctx.reply(tl(ctx, 'Использование: /find <предмет>\nНапр.: /find сера', 'Usage: /find <item>\nE.g.: /find sulfur'));
+    const session = sessions.sessionForUser(ctx.from.id);
+    if (!session) return ctx.reply(tl(ctx, 'Нет активной сессии.', 'No active session.'));
+    const r = await findInStorage(session, q);
+    if (!r) return ctx.reply(tl(ctx, 'Не знаю такой предмет.', 'I do not know that item.'));
+    if (!r.checked) return ctx.reply(tl(ctx, 'Нет привязанных Storage Monitor. Привяжи в игре (Pair).', 'No paired Storage Monitors. Pair them in game.'));
+    const name = uiLang(ctx) === 'en' ? itemName(r.itemId) : itemNameRu(r.itemId);
+    const failed = r.failed ? tl(ctx, `\n⚠️ Не ответили: ${r.failed}`, `\n⚠️ Did not respond: ${r.failed}`) : '';
+    if (!r.hits.length) return ctx.reply(tl(ctx, `📦 ${name}: нет ни в одном из ${r.checked} ящиков.`, `📦 ${name}: not in any of ${r.checked} containers.`) + failed);
+    const lines = r.hits.map((h) => `• ${h.name} — ${h.qty}`).join('\n');
+    return ctx.reply(`📦 ${name} ×${r.total}\n${lines}${failed}`);
+  });
+
+  bot.command('whereis', (ctx) => {
+    const q = ctx.match?.trim();
+    if (!q) return ctx.reply(tl(ctx, 'Использование: /whereis <монумент>\nНапр.: /whereis аэропорт', 'Usage: /whereis <monument>\nE.g.: /whereis airfield'));
+    const session = sessions.sessionForUser(ctx.from.id);
+    if (!session) return ctx.reply(tl(ctx, 'Нет активной сессии.', 'No active session.'));
+    if (!session.mapSize()) return ctx.reply(tl(ctx, 'Карта ещё не загружена — попробуй через минуту.', 'Map not loaded yet — try again in a minute.'));
+    const found = findMonuments(session.monuments(), q, session.mapSize());
+    if (!found.length) return ctx.reply(tl(ctx, `Не нашёл монумент «${q}».`, `No monument matching "${q}".`));
+    const en = uiLang(ctx) === 'en';
+    return ctx.reply('🏛️ ' + found.map((f) => `${en ? f.en : f.ru} — ${f.grid}`).join('\n🏛️ '));
+  });
+
   // --- Smart-home PRO: bulk control, scenes, raid reaction ---
   const setAllSwitches = async (ctx, on) => {
     const session = sessions.sessionForUser(ctx.from.id);
@@ -975,6 +1112,111 @@ export function createBot({ sessions }) {
     if (!getScene(ctx.from.id, name)) return ctx.reply(tl(ctx, `Сцена «${name}» не найдена. Создай: /scene save ${name}`, `Scene "${name}" not found. Create it: /scene save ${name}`));
     setRaidScene(ctx.from.id, name);
     return ctx.reply(tl(ctx, `🚨 При сигналке будет применяться сцена «${name}».`, `🚨 Scene "${name}" will be applied on alarm.`));
+  });
+
+  // --- Automations: switches driven by night / team offline / team online / timer ---
+  const AUTO_TRIGGER = {
+    night: 'night', ночь: 'night',
+    offline: 'offline', оффлайн: 'offline', офлайн: 'offline',
+    online: 'online', онлайн: 'online',
+    timer: 'timer', таймер: 'timer',
+  };
+  const autoUsage = (ctx) =>
+    tl(
+      ctx,
+      '🤖 <b>Автоматизации свитчей</b>\n<blockquote>' +
+        '/auto night «свитч» [off] — ВКЛ ночью, ВЫКЛ днём\n' +
+        '/auto offline «свитч» [мин] [off] — ВКЛ, когда вся тима вышла (через N мин, по умолч. 1)\n' +
+        '/auto online «свитч» [off] — ВКЛ, пока кто-то из тимы онлайн\n' +
+        '/auto timer «свитч» «вкл_мин» «выкл_мин» — цикл (полив)\n' +
+        '/auto del|pause|resume «id»</blockquote>\n' +
+        '<i>«свитч» — id из /devices или имя устройства (все свитчи с этим именем = группа). ' +
+        '[off] — наоборот: ВЫКЛ вместо ВКЛ. Если имя кончается цифрой, укажи id.</i>',
+      '🤖 <b>Switch automations</b>\n<blockquote>' +
+        '/auto night «switch» [off] — ON at night, OFF by day\n' +
+        '/auto offline «switch» [min] [off] — ON when the whole team left (after N min, default 1)\n' +
+        '/auto online «switch» [off] — ON while anyone in the team is online\n' +
+        '/auto timer «switch» «on_min» «off_min» — cycle (watering)\n' +
+        '/auto del|pause|resume «id»</blockquote>\n' +
+        '<i>«switch» — id from /devices or a device name (all switches with that name = a group). ' +
+        '[off] — inverted: OFF instead of ON. If a name ends with a number, use the id.</i>',
+    );
+  const describeRule = (ctx, r) => {
+    const inv = r.params.invert;
+    const on = inv ? tl(ctx, 'ВЫКЛ', 'OFF') : tl(ctx, 'ВКЛ', 'ON');
+    const what = {
+      night: tl(ctx, `${on} ночью`, `${on} at night`),
+      offline: tl(ctx, `${on}, когда тима оффлайн (${r.params.delayMin ?? 1} мин)`, `${on} when team offline (${r.params.delayMin ?? 1} min)`),
+      online: tl(ctx, `${on}, пока тима онлайн`, `${on} while team online`),
+      timer: tl(ctx, `цикл ${r.params.onMin} мин ВКЛ / ${r.params.offMin} мин ВЫКЛ`, `cycle ${r.params.onMin} min ON / ${r.params.offMin} min OFF`),
+    }[r.trigger] ?? r.trigger;
+    return `${r.enabled ? '🟢' : '⏸️'} #${r.id} ${esc(r.target)} — ${what}`;
+  };
+
+  bot.command('auto', (ctx) => {
+    const parts = ctx.match?.trim().split(/\s+/).filter(Boolean) ?? [];
+    const sub = (parts.shift() || '').toLowerCase();
+    const owner = ctx.from.id;
+
+    if (!sub) {
+      const rules = listRules(ownerForViewer(owner) ?? owner); // viewers see the family's rules
+      const list = rules.length ? rules.map((r) => describeRule(ctx, r)).join('\n') : tl(ctx, '<i>правил пока нет</i>', '<i>no rules yet</i>');
+      return ctx.reply(`${list}\n\n${autoUsage(ctx)}`, HTML);
+    }
+    if (blockViewer(ctx)) return undefined;
+
+    if (['del', 'удалить', 'pause', 'resume'].includes(sub)) {
+      const id = Number(parts[0]);
+      if (!id) return ctx.reply(tl(ctx, `Использование: /auto ${sub} <id>`, `Usage: /auto ${sub} <id>`));
+      if (sub === 'pause' || sub === 'resume') {
+        const ok = setRuleEnabled(owner, id, sub === 'resume');
+        if (!ok) return ctx.reply(tl(ctx, 'Не найдено.', 'Not found.'));
+        const rule = listRules(owner).find((r) => r.id === id);
+        if (sub === 'resume' && rule) sessions.sessionForUser(owner)?.automations.applyNow(rule);
+        return ctx.reply(sub === 'resume' ? tl(ctx, `▶️ #${id} включено`, `▶️ #${id} resumed`) : tl(ctx, `⏸️ #${id} на паузе`, `⏸️ #${id} paused`));
+      }
+      return ctx.reply(deleteRule(owner, id) ? tl(ctx, `Удалено #${id}`, `Deleted #${id}`) : tl(ctx, 'Не найдено.', 'Not found.'));
+    }
+
+    const trigger = AUTO_TRIGGER[sub];
+    if (!trigger) return ctx.reply(autoUsage(ctx), HTML);
+    if (countRules(owner) >= MAX_RULES) {
+      return ctx.reply(tl(ctx, `Лимит ${MAX_RULES} правил. Удали лишние: /auto del <id>`, `Limit of ${MAX_RULES} rules. Delete some: /auto del <id>`));
+    }
+
+    // Trailing flags/numbers come off the end; whatever is left is the target.
+    const params = {};
+    if (trigger !== 'timer' && ['off', 'выкл'].includes((parts[parts.length - 1] || '').toLowerCase())) {
+      parts.pop();
+      params.invert = true;
+    }
+    const nums = [];
+    const want = trigger === 'timer' ? 2 : trigger === 'offline' ? 1 : 0;
+    // Keep at least one part: "/auto offline 12345" means switch 12345, not a 12345-min delay.
+    while (nums.length < want && parts.length > 1 && /^\d+$/.test(parts[parts.length - 1] || '')) nums.unshift(Number(parts.pop()));
+    if (trigger === 'timer') {
+      if (nums.length < 2 || nums[0] < 1 || nums[1] < 1) {
+        return ctx.reply(tl(ctx, 'Использование: /auto timer <свитч> <вкл_мин> <выкл_мин>\nНапр.: /auto timer Полив 2 10', 'Usage: /auto timer <switch> <on_min> <off_min>\nE.g.: /auto timer Water 2 10'));
+      }
+      [params.onMin, params.offMin] = nums;
+    }
+    if (trigger === 'offline' && nums.length) params.delayMin = Math.min(nums[0], 120);
+
+    const target = parts.join(' ');
+    if (!target) return ctx.reply(autoUsage(ctx), HTML);
+    const ids = resolveTarget(owner, target);
+    if (!ids.length) {
+      return ctx.reply(tl(ctx, `Свитч «${target}» не найден. Список: /devices`, `Switch "${target}" not found. List: /devices`));
+    }
+
+    const id = addRule(owner, trigger, target, params);
+    const rule = listRules(owner).find((r) => r.id === id);
+    const applied = rule ? sessions.sessionForUser(owner)?.automations.applyNow(rule) : null;
+    const now = applied == null ? '' : tl(ctx, '\nПрименено к текущему состоянию.', '\nApplied to the current state.');
+    return ctx.reply(
+      tl(ctx, `✅ Правило добавлено (${ids.length} свитч.):\n`, `✅ Rule added (${ids.length} switch(es)):\n`) + describeRule(ctx, rule) + now,
+      HTML,
+    );
   });
 
   // Vending machine / market commands read map markers, which Facepunch stopped

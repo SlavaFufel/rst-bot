@@ -20,6 +20,7 @@ const ROUTES = {
   [EVENTS.SERVER_DOWN]: { type: 'server', toGame: false },
   [EVENTS.SERVER_UP]: { type: 'server', toGame: false },
   [EVENTS.ALARM]: { type: 'alarm', toGame: false },
+  [EVENTS.AUTOMATION]: { type: 'auto', toGame: false },
   [EVENTS.TIME_DAY]: { type: 'time', toGame: false },
   [EVENTS.TIME_NIGHT]: { type: 'time', toGame: false },
   [EVENTS.TIME_DAY_SOON]: { type: 'time', toGame: false },

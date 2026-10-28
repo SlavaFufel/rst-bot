@@ -5,7 +5,7 @@ import { ownerForViewer } from '../store/members.js';
 
 // Commands a user without an active subscription may still use. /join is here so
 // a fresh teammate (no license yet) can redeem a family invite code.
-const PUBLIC_COMMAND = /^\/(start|redeem|sub|help|lang|join)\b/;
+const PUBLIC_COMMAND = /^\/(start|redeem|sub|help|lang|join|buy|paysupport)\b/;
 
 // Seed the first admin from ADMIN_TELEGRAM_ID (or the first whitelisted id).
 export function seedAdmin() {
@@ -24,6 +24,9 @@ export function createGate() {
     // Always let the first-run language choice through (no message text on a
     // callback query, so it would otherwise fail the public-command check).
     if (ctx.callbackQuery?.data?.startsWith('lang:')) return next();
+    // Buying is how a non-subscriber becomes one: plan buttons, checkout, receipt.
+    if (ctx.callbackQuery?.data?.startsWith('buy:')) return next();
+    if (ctx.preCheckoutQuery || ctx.message?.successful_payment) return next();
 
     const whitelisted = config.telegram.allowedIds.includes(id);
     if (whitelisted || isAdmin(id)) {

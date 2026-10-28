@@ -2,6 +2,10 @@ import { log } from '../logger.js';
 import { raidCost } from '../util/raidcalc.js';
 import { craftInfo, recycleInfo, decayInfo, durabilityInfo, fmtDuration, num } from '../util/rustlabs.js';
 import { dayNight } from '../util/daynight.js';
+import { gridFromXY } from '../util/grid.js';
+import { findMonuments } from '../util/monuments.js';
+import { itemNameRu } from '../util/items.js';
+import { findInStorage } from '../features/storage.js';
 import { resolveSteamId, getSummary, getBans, getRustStats, getPlaytimeMinutes } from '../enemy/steamstats.js';
 
 // "10 rocket" → { qty: 10, rest: 'rocket' }; "rocket" → { qty: 1, rest: 'rocket' }.
@@ -27,8 +31,12 @@ function packLine(prefix, parts, budget = 116) {
 
 // Read-only commands usable from the in-game team chat (prefix '!').
 // Replies go back into team chat, which caps at ~128 chars, so keep them short.
-const HELP =
-  '!pop !time !online !team !teamstats !playtime-all !afktime-all !promote [ник] !raid <об> !durability <об> !craft <n> <предмет> !recycle <n> <предмет> !decay <hp> <об> !check <id> !wipe';
+// Split into lines that each fit one team-chat message (the bridge cuts at 128).
+const HELP = [
+  '!pop !time !online !team !locate [ник] !nearby !whereis <монумент> !find <предмет>',
+  '!teamstats !playtime-all !afktime-all !deaths !promote [ник] !wipe !check <id>',
+  '!raid <об> !durability <об> !craft <n> <предмет> !recycle <n> <предмет> !decay <hp> <об>',
+];
 
 // Commands that read map markers (events, vending machines). Facepunch stopped
 // sending markers over Rust+ on 2026-08-06 — answer with an explanation instead
@@ -48,7 +56,7 @@ export async function handleInGameCommand(session, teamMessage) {
     switch ((cmd || '').toLowerCase()) {
       case 'help':
       case 'commands':
-        reply(HELP);
+        HELP.forEach(reply);
         break;
 
       case 'pop': {
@@ -77,6 +85,53 @@ export async function handleInGameCommand(session, teamMessage) {
         const team = await session.getTeamInfo();
         const s = (team.members ?? []).map((m) => `${m.name}${m.isOnline ? (m.isAlive ? '+' : 'x') : '-'}`);
         reply(s.length ? `Тима: ${s.join(' ')}` : 'Тима пуста');
+        break;
+      }
+
+      case 'locate':
+      case 'where': {
+        const mapSize = session.mapSize();
+        const team = await session.getTeamInfo();
+        const q = arg.toLowerCase();
+        const who = (team.members ?? []).filter((m) => m.isOnline && (!q || (m.name ?? '').toLowerCase().includes(q)));
+        if (!who.length) return reply(q ? `Нет онлайн игрока «${arg}»` : 'Никого нет в сети');
+        reply(packLine('Где:', who.map((m) => `${m.name} ${gridFromXY(m.x, m.y, mapSize) ?? '??'}${m.isAlive ? '' : ' (мёртв)'}`)));
+        break;
+      }
+
+      case 'nearby':
+      case 'near': {
+        const team = await session.getTeamInfo();
+        const members = team.members ?? [];
+        const me = members.find((m) => String(m.steamId) === String(teamMessage.steamId));
+        if (!me) return reply('Не нашёл тебя в тиме');
+        const others = members
+          .filter((m) => m !== me && m.isOnline && m.isAlive)
+          .map((m) => ({ name: m.name, d: Math.round(Math.hypot(m.x - me.x, m.y - me.y)) }))
+          .sort((a, b) => a.d - b.d);
+        reply(others.length ? packLine('Рядом:', others.map((o) => `${o.name} ${o.d}м`)) : 'Рядом никого из тимы');
+        break;
+      }
+
+      case 'whereis':
+      case 'monument': {
+        if (!arg) return reply('Напр.: !whereis аэропорт');
+        const found = findMonuments(session.monuments(), arg, session.mapSize());
+        if (!found.length) return reply(`Не нашёл монумент «${arg}»`);
+        const byName = new Map();
+        for (const f of found) byName.set(f.ru, [...(byName.get(f.ru) ?? []), f.grid]);
+        reply(packLine('', [...byName].map(([name, grids]) => `${name}: ${grids.join('/')}`)).trim());
+        break;
+      }
+
+      case 'find':
+      case 'contains': {
+        if (!arg) return reply('Напр.: !find сера');
+        const r = await findInStorage(session, arg);
+        if (!r) return reply('Не знаю такой предмет');
+        if (!r.checked) return reply('Нет привязанных Storage Monitor');
+        if (!r.hits.length) return reply(`${itemNameRu(r.itemId)}: нет в ящиках`);
+        reply(packLine(`${itemNameRu(r.itemId)} ×${r.total}:`, r.hits.map((h) => `${h.name} ${h.qty}`)));
         break;
       }
 
