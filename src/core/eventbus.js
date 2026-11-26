@@ -18,6 +18,7 @@ export const EVENTS = Object.freeze({
   FRIEND_OFFLINE: 'friend_offline',
   ENEMY_ONLINE: 'enemy_online',
   ENEMY_OFFLINE: 'enemy_offline',
+  ENEMY_GROUP_OFFLINE: 'enemy_group_offline',
   WIPE_DETECTED: 'wipe_detected',
   SERVER_DOWN: 'server_down',
   SERVER_UP: 'server_up',

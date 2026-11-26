@@ -1,10 +1,14 @@
-// Activity analytics over a player's session history (from BattleMetrics).
+// Activity analytics over a player's session history (our server player-list
+// log, Steam presence, or BattleMetrics).
 // Each session is { start: ISO string, stop: ISO string | null }. stop=null
 // means the player is currently online.
 
 const HOURS = 24;
 const DAYS = 7;
-const OPEN_SESSION_CAP_MS = 2 * 3600 * 1000; // assume an open session ~2h for weighting
+const OPEN_SESSION_CAP_MS = 12 * 3600 * 1000; // an open session counts up to now, at most 12h (stale data guard)
+
+// End of a session: its stop, or now for one still open.
+const endOf = (s, start) => (s.stop ? Date.parse(s.stop) : Math.min(Date.now(), start + OPEN_SESSION_CAP_MS));
 const BARS = '▁▂▃▄▅▆▇█';
 
 // Average minutes played per day, over the span since the first observed session.
@@ -16,7 +20,7 @@ export function avgMinutesPerDay(sessions) {
   for (const s of sessions) {
     if (!s.start) continue;
     const a = Date.parse(s.start);
-    const b = s.stop ? Date.parse(s.stop) : a + OPEN_SESSION_CAP_MS;
+    const b = endOf(s, a);
     total += Math.max(0, (b - a) / 60000);
   }
   const days = Math.max(1, (Date.now() - first) / 86_400_000);
@@ -43,7 +47,7 @@ export function buildHeatmap(sessions, tzOffsetHours = 0) {
     if (!s.start) continue;
     const start = Date.parse(s.start);
     if (Number.isNaN(start)) continue;
-    const stop = s.stop ? Date.parse(s.stop) : start + OPEN_SESSION_CAP_MS;
+    const stop = endOf(s, start);
     let t = start;
     while (t < stop) {
       const local = new Date(t + tz);
@@ -88,7 +92,7 @@ const pad2 = (n) => String(n).padStart(2, '0');
 
 // Human-readable enemy activity profile for Telegram.
 export function renderProfile(name, sessions, tzOffsetHours = 0) {
-  if (!sessions.length) return `🎯 ${name}\nНет данных о сессиях (или сервер не отслеживается BattleMetrics).`;
+  if (!sessions.length) return `🎯 ${name}\nНет данных о сессиях.`;
   const heatmap = buildHeatmap(sessions, tzOffsetHours);
   const byHour = onlineByHour(heatmap);
   const avg = avgSessionMinutes(sessions);

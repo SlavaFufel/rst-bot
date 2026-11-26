@@ -59,6 +59,10 @@ const FORMATTERS = {
     ru: (p) => `🎯 ${p.label} вышел`,
     en: (p) => `🎯 ${p.label} went offline`,
   },
+  [EVENTS.ENEMY_GROUP_OFFLINE]: {
+    ru: (p) => `🎯 Вся группа «${p.group}» вышла (${p.count} игроков) — база без присмотра`,
+    en: (p) => `🎯 The whole "${p.group}" group went offline (${p.count} players) — their base is unattended`,
+  },
   [EVENTS.WIPE_DETECTED]: {
     ru: () => '🧹 ВАЙП! Сервер сменил seed. Бот мог выпасть из тимы → /repair',
     en: () => '🧹 WIPE! The server changed seed. The bot may have dropped from the team → /repair',

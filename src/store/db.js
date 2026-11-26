@@ -243,6 +243,20 @@ CREATE TABLE IF NOT EXISTS team_stats (
   updated_at  INTEGER NOT NULL,
   PRIMARY KEY (session_id, steam_id, wipe)
 );
+
+-- Who was on each subscriber's server and when, collected by polling the server's
+-- A2S player list every minute (enemy/presence.js). server = 'ip:queryPort'.
+-- A row is one continuous stay of one nickname; ended_at NULL = still online.
+CREATE TABLE IF NOT EXISTS server_presence (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  server     TEXT NOT NULL,
+  name       TEXT NOT NULL,
+  started_at INTEGER NOT NULL,
+  last_seen  INTEGER NOT NULL,
+  ended_at   INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_presence_name ON server_presence (server, name COLLATE NOCASE, started_at);
+CREATE INDEX IF NOT EXISTS idx_presence_open ON server_presence (server, ended_at);
 `;
 
 mkdirSync(dirname(config.dbPath), { recursive: true });

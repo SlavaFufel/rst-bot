@@ -16,6 +16,7 @@ const ROUTES = {
   [EVENTS.FRIEND_OFFLINE]: { type: 'friend', toGame: false },
   [EVENTS.ENEMY_ONLINE]: { type: 'enemy', toGame: true },
   [EVENTS.ENEMY_OFFLINE]: { type: 'enemy', toGame: true },
+  [EVENTS.ENEMY_GROUP_OFFLINE]: { type: 'enemy', toGame: true },
   [EVENTS.WIPE_DETECTED]: { type: 'server', toGame: false },
   [EVENTS.SERVER_DOWN]: { type: 'server', toGame: false },
   [EVENTS.SERVER_UP]: { type: 'server', toGame: false },
@@ -98,6 +99,7 @@ export function createNotifier(bot, sessionManager) {
   const ownerEvents = [
     [EVENTS.ENEMY_ONLINE, 'enemy'],
     [EVENTS.ENEMY_OFFLINE, 'enemy'],
+    [EVENTS.ENEMY_GROUP_OFFLINE, 'enemy'],
     [EVENTS.DECAY_WARNING, 'decay'],
   ];
   for (const [event, type] of ownerEvents) {

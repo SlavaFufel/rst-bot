@@ -29,7 +29,9 @@ const CATS = [
     ['/decay [hp] «объект»', 'время распада объекта', 'structure decay time'],
   ] },
   { icon: '🎯', ru: 'Игроки', en: 'Players', cmds: [
-    ['/enemy add|stats|list|remove', 'досье по SteamID', 'dossier by SteamID'],
+    ['/players · /seen «ник»', 'кто сейчас на сервере · когда заходил ник _(30 дней)_', 'who is on the server now · when a name played _(30 days)_'],
+    ['/enemy nick «ник» · /enemy add «SteamID»', 'следить за врагом: вход/выход, когда играет, окно для рейда', 'track an enemy: join/leave, when they play, raid window'],
+    ['/enemy list|stats|group|remove', 'список, досье, тима врагов _(сообщу, когда выйдут все)_', 'list, dossier, enemy team _(alert when all are offline)_'],
     ['/check «SteamID|ссылка»', 'VAC / смурф-чек', 'VAC / smurf check'],
     ['/track «steamId» «имя» · /online', 'друзья + живой статус (🎮 в Rust/🟢/⚪)', 'friends + live status (🎮 in Rust/🟢/⚪)'],
   ] },
@@ -73,7 +75,7 @@ const PLACEHOLDER_EN = {
   'текст': 'text', 'предмет': 'item', 'валюта': 'currency', 'имя': 'name',
   'ссылка': 'link', 'объект': 'structure', 'кол-во': 'qty', 'сцена': 'scene',
   'ключ': 'key', 'грид': 'grid', 'клетка': 'cell', 'дней': 'days', 'план': 'plan',
-  'цена': 'price', 'монумент': 'monument',
+  'цена': 'price', 'монумент': 'monument', 'ник': 'name',
 };
 const usageFor = (u, en) =>
   en ? u.replace(/[А-Яа-яЁё][А-Яа-яЁё-]*/g, (w) => PLACEHOLDER_EN[w.toLowerCase()] ?? w) : u;

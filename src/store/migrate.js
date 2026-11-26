@@ -35,6 +35,13 @@ export function migrate(db) {
     addColumn(db, 'licenses', 'renew_warned_for', 'INTEGER');
     // Storage Monitor: notify the owner when the container's contents change (1=on).
     addColumn(db, 'devices', 'watch', 'INTEGER NOT NULL DEFAULT 0');
+    // A2S query port of the paired server (found by probing; see enemy/a2s.js).
+    addColumn(db, 'rust_sessions', 'query_port', 'INTEGER');
+    // Enemies: in-game nickname to look for in the server's player list
+    // (set for /enemy nick; SteamID enemies are matched by their Steam name),
+    // and an optional group name for "their whole team went offline".
+    addColumn(db, 'enemies', 'nick', 'TEXT');
+    addColumn(db, 'enemies', 'grp', 'TEXT');
     db.exec('COMMIT');
   } catch (err) {
     db.exec('ROLLBACK');

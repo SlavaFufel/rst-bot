@@ -12,8 +12,10 @@ const insertStmt = db.prepare(`
 `);
 const updateServerStmt = db.prepare(`
   UPDATE rust_sessions
-  SET ip = ?, port = ?, player_id = ?, player_token = ?, server_id = ?, label = ?, updated_at = ?
-  WHERE owner_user_id = ?
+  SET ip = ?1, port = ?2, player_id = ?3, player_token = ?4, server_id = ?5, label = ?6, updated_at = ?7,
+      -- forget the A2S query port when the server changes (SET reads the old ip/port)
+      query_port = CASE WHEN ip = ?1 AND port = ?2 THEN query_port ELSE NULL END
+  WHERE owner_user_id = ?8
 `);
 const setStateStmt = db.prepare('UPDATE rust_sessions SET state = ?, updated_at = ? WHERE owner_user_id = ?');
 const deleteStmt = db.prepare('DELETE FROM rust_sessions WHERE owner_user_id = ?');
@@ -66,6 +68,12 @@ export function getBmServerId(ownerId) {
 }
 export function setBmServerId(ownerId, bmServerId) {
   setBmStmt.run(bmServerId, ownerId);
+}
+
+const setQueryPortStmt = db.prepare('UPDATE rust_sessions SET query_port = ? WHERE owner_user_id = ?');
+
+export function setQueryPort(ownerId, queryPort) {
+  setQueryPortStmt.run(queryPort, ownerId);
 }
 
 export function remove(ownerId) {

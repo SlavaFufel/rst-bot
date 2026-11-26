@@ -3,16 +3,26 @@ import { db } from '../store/db.js';
 // Per-owner tracked enemies (enemies table; owner_user_id added by migrate).
 
 const addStmt = db.prepare(
-  'INSERT INTO enemies (label, steam_id, bm_player_id, notify, added_by, owner_user_id) VALUES (?, ?, ?, 1, ?, ?)'
+  'INSERT INTO enemies (label, steam_id, bm_player_id, nick, notify, added_by, owner_user_id) VALUES (?, ?, ?, ?, 1, ?, ?)'
 );
-const listStmt = db.prepare('SELECT id, label, steam_id, bm_player_id, notify FROM enemies WHERE owner_user_id = ? ORDER BY id');
+const listStmt = db.prepare('SELECT id, label, steam_id, bm_player_id, nick, grp, notify FROM enemies WHERE owner_user_id = ? ORDER BY grp, id');
+const setGroupStmt = db.prepare('UPDATE enemies SET grp = ? WHERE id = ? AND owner_user_id = ?');
+const trackedStmt = db.prepare('SELECT id, label, steam_id, nick, grp, owner_user_id FROM enemies WHERE notify = 1');
 const getStmt = db.prepare('SELECT * FROM enemies WHERE id = ? AND owner_user_id = ?');
 const findByLabelStmt = db.prepare('SELECT * FROM enemies WHERE owner_user_id = ? AND label = ? COLLATE NOCASE LIMIT 1');
 const delStmt = db.prepare('DELETE FROM enemies WHERE id = ? AND owner_user_id = ?');
 const allNotifyStmt = db.prepare('SELECT id, label, bm_player_id, owner_user_id FROM enemies WHERE notify = 1 AND bm_player_id IS NOT NULL');
 
-export function addEnemy(ownerId, { label, steamId = null, bmPlayerId = null }) {
-  return Number(addStmt.run(label, steamId, bmPlayerId, ownerId, ownerId).lastInsertRowid);
+export function addEnemy(ownerId, { label, steamId = null, bmPlayerId = null, nick = null }) {
+  return Number(addStmt.run(label, steamId, bmPlayerId, nick, ownerId, ownerId).lastInsertRowid);
+}
+// group = null removes the enemy from its group.
+export function setEnemyGroup(id, ownerId, group) {
+  return setGroupStmt.run(group, id, ownerId).changes > 0;
+}
+// Every notify-enabled enemy (SteamID and/or nickname), for the presence poll.
+export function trackedEnemies() {
+  return trackedStmt.all();
 }
 export function listEnemies(ownerId) {
   return listStmt.all(ownerId);
@@ -41,7 +51,7 @@ export function trackedWithSteam() {
 
 // --- Observed presence sessions (bot's own tracking → activity heatmap) ---
 const openSessStmt = db.prepare('SELECT id FROM enemy_sessions WHERE enemy_id = ? AND ended_at IS NULL ORDER BY id DESC LIMIT 1');
-const insertSessStmt = db.prepare("INSERT INTO enemy_sessions (enemy_id, owner_user_id, started_at, source) VALUES (?, ?, ?, 'steam')");
+const insertSessStmt = db.prepare("INSERT INTO enemy_sessions (enemy_id, owner_user_id, started_at, source) VALUES (?, ?, ?, 'presence')");
 const closeSessStmt = db.prepare('UPDATE enemy_sessions SET ended_at = ?, duration_sec = (? - started_at) / 1000 WHERE id = ?');
 const getSessStmt = db.prepare('SELECT started_at, ended_at FROM enemy_sessions WHERE enemy_id = ? ORDER BY started_at');
 

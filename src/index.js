@@ -38,11 +38,11 @@ async function main() {
     canPair: (telegramId, playerId) => checkAndBind(telegramId, playerId, { isAdmin: isAdmin(telegramId) }),
   });
 
-  bot = createBot({ sessions: sessionManager });
+  const enemy = new EnemyTracker({ ownerOf: (id) => sessionManager.sessionForUser(id)?.ownerUserId ?? id });
+  bot = createBot({ sessions: sessionManager, enemies: enemy });
   createNotifier(bot, sessionManager);
 
   const steam = new SteamTracker();
-  const enemy = new EnemyTracker();
   const scheduler = new Scheduler(sessionManager);
   const subscriptions = new SubscriptionService({
     sessionManager,

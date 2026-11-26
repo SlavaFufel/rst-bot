@@ -17,7 +17,7 @@ import { craftInfo, recycleInfo, decayInfo, durabilityInfo, fmtDuration } from '
 import { addNote, listNotes, deleteNote, addPin, listPins, deletePin, sessionStats } from '../features/journal.js';
 import { quickMatchSteamId, fetchSessions, playerServers } from '../enemy/battlemetrics.js';
 import { renderProfile } from '../enemy/analytics.js';
-import { addEnemy, listEnemies, removeEnemy, findEnemy, getEnemy, getEnemySessions } from '../enemy/store.js';
+import { addEnemy, listEnemies, removeEnemy, findEnemy, getEnemy, getEnemySessions, setEnemyGroup } from '../enemy/store.js';
 import { resolveBmServerId } from '../enemy/resolve.js';
 import { resolveSteamId, getSummary, getSummaries, getRustStats, getPlaytimeMinutes, renderSteamProfile, getBans, renderTrust } from '../enemy/steamstats.js';
 import { listDevices, typeName, storageMonitors, setStorageWatch } from '../devices/store.js';
@@ -110,7 +110,10 @@ function formatExpiry(ms, lang = 'ru') {
   return new Date(ms).toLocaleDateString(lang === 'en' ? 'en-GB' : 'ru-RU');
 }
 
-export function createBot({ sessions }) {
+export function createBot({ sessions, enemies }) {
+  const presence = enemies?.presence;
+  // ip:queryPort of the server this user follows (their own, or the family owner's).
+  const serverKeyOf = (userId) => presence?.keyForOwner(sessions.sessionForUser(userId)?.ownerUserId ?? userId) ?? null;
   const bot = new Bot(config.telegram.token);
 
   // Force a one-time language choice before anything else. The picker callback
@@ -653,10 +656,57 @@ export function createBot({ sessions }) {
       return ctx.reply(tl(ctx, `🎯 Добавлен враг #${id}: ${label}\nСтатистика: /enemy stats ${steamId}`, `🎯 Enemy #${id} added: ${label}\nStats: /enemy stats ${steamId}`));
     }
 
+    if (sub === 'nick') {
+      if (!rest) return ctx.reply(tl(ctx, 'Использование: /enemy nick «ник в игре»', 'Usage: /enemy nick «in-game name»'));
+      const nick = rest.slice(0, 64);
+      const dup = findEnemy(ctx.from.id, nick);
+      if (dup) return ctx.reply(tl(ctx, `Уже в списке: #${dup.id} ${dup.label}`, `Already tracked: #${dup.id} ${dup.label}`));
+      const id = addEnemy(ctx.from.id, { label: nick, nick });
+      const key = serverKeyOf(ctx.from.id);
+      const seen = key ? presence.history(key, nick).length : 0;
+      const status = presence?.isOnline(key, nick)
+        ? tl(ctx, '🟢 сейчас на сервере', '🟢 on the server now')
+        : seen
+          ? tl(ctx, `уже видели на сервере (${seen} заход.)`, `seen on the server before (${seen} stays)`)
+          : tl(ctx, 'на сервере пока не видели — проверь ник: /seen «часть ника»', 'not seen on the server yet — check the name: /seen «part of name»');
+      return ctx.reply(tl(
+        ctx,
+        `🎯 Добавлен враг #${id}: ${nick} (${status})\nБот следит за ним по списку игроков сервера. Группа: /enemy group «название» ${id}`,
+        `🎯 Enemy #${id} added: ${nick} (${status})\nTracked via the server player list. Group: /enemy group «name» ${id}`,
+      ));
+    }
+
+    if (sub === 'group' || sub === 'ungroup') {
+      const grp = sub === 'group' ? args.shift() : null;
+      const ids = args.map((a) => Number(a.replace(/^#/, ''))).filter(Boolean);
+      if ((sub === 'group' && !grp) || !ids.length) {
+        return ctx.reply(tl(
+          ctx,
+          'Группа = тима врагов. Когда выйдут все — придёт уведомление.\n/enemy group «название» «id» [id…]\n/enemy ungroup «id» [id…]',
+          'A group is an enemy team. You get a notification when all of them go offline.\n/enemy group «name» «id» [id…]\n/enemy ungroup «id» [id…]',
+        ));
+      }
+      const done = ids.filter((id) => setEnemyGroup(id, ctx.from.id, grp?.slice(0, 32) ?? null));
+      if (!done.length) return ctx.reply(tl(ctx, 'Не найдено. Номера — из /enemy list.', 'Not found. Numbers are from /enemy list.'));
+      return ctx.reply(grp
+        ? tl(ctx, `👥 В группе «${grp}»: #${done.join(', #')}`, `👥 In group "${grp}": #${done.join(', #')}`)
+        : tl(ctx, `Убраны из групп: #${done.join(', #')}`, `Removed from groups: #${done.join(', #')}`));
+    }
+
     if (sub === 'list') {
       const list = listEnemies(ctx.from.id);
-      if (!list.length) return ctx.reply(tl(ctx, 'Список врагов пуст. /enemy add <SteamID|ссылка>', 'Enemy list is empty. /enemy add <SteamID|link>'));
-      return ctx.reply(tl(ctx, '🎯 Враги:', '🎯 Enemies:') + '\n' + list.map((e) => `#${e.id} ${e.label}`).join('\n'));
+      if (!list.length) return ctx.reply(tl(ctx, 'Список врагов пуст. /enemy add <SteamID|ссылка> или /enemy nick «ник»', 'Enemy list is empty. /enemy add <SteamID|link> or /enemy nick «name»'));
+      const rows = [];
+      let lastGrp;
+      for (const e of list) {
+        if (e.grp && e.grp !== lastGrp) rows.push(`👥 ${e.grp}:`);
+        lastGrp = e.grp;
+        const online = enemies?.state.get(e.id);
+        const dot = online === undefined ? '·' : online ? '🟢' : '⚪';
+        const how = e.steam_id ? 'Steam' : tl(ctx, 'ник', 'name');
+        rows.push(`${e.grp ? '  ' : ''}${dot} #${e.id} ${e.label} (${how})`);
+      }
+      return ctx.reply(tl(ctx, '🎯 Враги:', '🎯 Enemies:') + '\n' + rows.join('\n'));
     }
 
     if (sub === 'remove' || sub === 'rm') {
@@ -666,36 +716,65 @@ export function createBot({ sessions }) {
     }
 
     if (sub === 'stats') {
-      if (!rest) return ctx.reply(tl(ctx, 'Использование: /enemy stats <SteamID | ссылка | #id из /enemy list>', 'Usage: /enemy stats <SteamID | link | #id from /enemy list>'));
-      // Resolve SteamID: from a tracked enemy (#id/label), else parse the input.
-      const tracked = (Number(rest) ? getEnemy(Number(rest), ctx.from.id) : null) || findEnemy(ctx.from.id, rest);
+      if (!rest) return ctx.reply(tl(ctx, 'Использование: /enemy stats <#id | ник | SteamID | ссылка>', 'Usage: /enemy stats <#id | name | SteamID | link>'));
+      const key = serverKeyOf(ctx.from.id);
+      // Who: a tracked enemy (#id/label), a SteamID/link, or a nickname seen on the server.
+      const tracked = (Number(rest.replace(/^#/, '')) ? getEnemy(Number(rest.replace(/^#/, '')), ctx.from.id) : null) || findEnemy(ctx.from.id, rest);
       let steamId = tracked?.steam_id ?? null;
-      if (!steamId) {
-        try {
-          steamId = await resolveSteamId(rest);
-        } catch (err) {
-          return ctx.reply('❌ ' + err.message);
+      let nick = tracked?.nick ?? null;
+      if (!tracked) {
+        const looksLikeSteam = /^7656119\d{10}$/.test(rest) || /steamcommunity\.com\//.test(rest);
+        if (!looksLikeSteam && key && presence.history(key, rest).length) nick = rest;
+        else {
+          try {
+            steamId = await resolveSteamId(rest);
+          } catch (err) {
+            return ctx.reply('❌ ' + err.message);
+          }
         }
       }
-      if (!steamId) return ctx.reply(tl(ctx, 'Не удалось определить SteamID игрока.', "Could not resolve the player's SteamID."));
+      if (!steamId && !nick) {
+        return ctx.reply(tl(
+          ctx,
+          'Игрок не найден: ни в /enemy list, ни на твоём сервере, ни в Steam. Ник можно поискать: /seen «часть ника»',
+          'Player not found: not in /enemy list, not on your server, not on Steam. Search names: /seen «part of name»',
+        ));
+      }
 
       await ctx.reply(tl(ctx, 'Считаю статистику…', 'Crunching stats…'));
-      const [summary, stats, playtime, bans] = await Promise.all([
-        getSummary(steamId).catch(() => null),
-        getRustStats(steamId).catch(() => ({ private: true })),
-        getPlaytimeMinutes(steamId).catch(() => null),
-        getBans(steamId).catch(() => null),
-      ]);
-      let text = renderSteamProfile(summary, stats, playtime, uiLang(ctx));
-      text += '\n\n———\n' + renderTrust(summary, bans, stats, playtime, uiLang(ctx));
       const tz = config.analytics.tzOffset;
-      const name = summary?.name ?? tracked?.label ?? steamId;
+      let text = '';
+      let summary = null;
+      if (steamId) {
+        let stats, playtime, bans;
+        [summary, stats, playtime, bans] = await Promise.all([
+          getSummary(steamId).catch(() => null),
+          getRustStats(steamId).catch(() => ({ private: true })),
+          getPlaytimeMinutes(steamId).catch(() => null),
+          getBans(steamId).catch(() => null),
+        ]);
+        text = renderSteamProfile(summary, stats, playtime, uiLang(ctx));
+        text += '\n\n———\n' + renderTrust(summary, bans, stats, playtime, uiLang(ctx));
+      }
+      const name = summary?.name ?? tracked?.label ?? nick ?? steamId;
       let activity = '';
+      let source = '';
       let bmServers = [];
 
-      // BattleMetrics — INSTANT historical "when online" + other servers the enemy
-      // plays on (the only public source of past session times; Steam has none).
-      if (config.battlemetrics.token) {
+      // 1. Our own log of the server's player list (A2S): any server that publishes it.
+      const serverName = nick ?? (tracked ? enemies?.names.get(tracked.id) : null) ?? summary?.name ?? tracked?.label;
+      const hist = key && serverName ? presence.history(key, serverName) : [];
+      if (hist.length) {
+        activity = renderProfile(hist[0].name, hist, tz);
+        source = tl(
+          ctx,
+          `по списку игроков сервера, с ${new Date(hist[0].start).toLocaleDateString('ru-RU')}`,
+          `from the server player list, since ${new Date(hist[0].start).toLocaleDateString('en-GB')}`,
+        );
+      }
+
+      // 2. BattleMetrics, if the operator has a paid token: older history + other servers.
+      if (steamId && config.battlemetrics.token) {
         try {
           const matches = await quickMatchSteamId(steamId, { token: config.battlemetrics.token });
           if (matches.length) {
@@ -705,39 +784,43 @@ export function createBot({ sessions }) {
               fetchSessions(bmId, { token: config.battlemetrics.token, serverId }).catch(() => []),
               playerServers(bmId, { token: config.battlemetrics.token }).catch(() => []),
             ]);
-            if (ses.length) activity = renderProfile(name, ses, tz);
+            if (!activity && ses.length) {
+              activity = renderProfile(name, ses, tz);
+              source = 'BattleMetrics';
+            }
             bmServers = servers;
           }
         } catch {
-          // bonus — ignore failures
+          // optional source — ignore failures
         }
       }
 
-      // Fallback: bot's own accumulated observations (works on ANY server).
+      // 3. Steam presence observed by the bot ("in Rust" on any server).
       if (!activity && tracked) {
         const obs = getEnemySessions(tracked.id).map((s) => ({
           start: new Date(s.started_at).toISOString(),
           stop: s.ended_at ? new Date(s.ended_at).toISOString() : null,
         }));
-        if (obs.length >= 3) activity = renderProfile(name, obs, tz);
+        if (obs.length >= 3) {
+          activity = renderProfile(name, obs, tz);
+          source = tl(ctx, 'по статусу «в Rust» в Steam', 'from the Steam "in Rust" status');
+        }
       }
 
+      if (text) text += '\n\n———\n';
       if (activity) {
-        text += '\n\n———\n' + tl(ctx, '📈 Активность:', '📈 Activity:') + '\n' + activity;
+        text += tl(ctx, '📈 Активность', '📈 Activity') + ` (${source}):\n` + activity;
       } else {
-        // No historical source available — explain why (the user asked for this).
-        text += '\n\n———\n' + tl(
+        text += tl(
           ctx,
-          '📈 Когда онлайн: пока нет данных.\n' +
-            'Историю активности отдаёт только BattleMetrics (community-серверы). На официальных серверах Facepunch и для неотслеживаемых игроков истории нет нигде — Steam её не публикует.\n' +
-            (tracked
-              ? '✅ Игрок в трекинге — бот сам накапливает статистику присутствия. Загляни через день-два.'
-              : 'Добавь в трекинг (/enemy add <SteamID>), и бот начнёт копить «когда онлайн» сам.'),
-          '📈 When online: no data yet.\n' +
-            'Activity history only comes from BattleMetrics (community servers). On official Facepunch servers and for untracked players there is no history anywhere — Steam does not publish it.\n' +
-            (tracked
-              ? '✅ Player is tracked — the bot accumulates presence stats on its own. Check back in a day or two.'
-              : 'Add to tracking (/enemy add <SteamID>) and the bot will start collecting "when online" itself.'),
+          `🎯 ${name}\n📈 Когда онлайн: пока нет данных.\n` +
+            (key
+              ? 'Бот каждую минуту записывает, кто играет на твоём сервере. Если ник в игре другой, чем в Steam, добавь врага по нику: /enemy nick «ник».'
+              : 'Сбор по серверу начнётся, когда бот подключится к твоему серверу (привязка Rust+).'),
+          `🎯 ${name}\n📈 When online: no data yet.\n` +
+            (key
+              ? 'The bot records who plays on your server every minute. If the in-game name differs from Steam, add the enemy by name: /enemy nick «name».'
+              : 'Server tracking starts once the bot is connected to your server (Rust+ pairing).'),
         );
       }
 
@@ -750,18 +833,73 @@ export function createBot({ sessions }) {
     return ctx.reply(
       tl(
         ctx,
-        '🎯 Трекинг врагов (по SteamID, как ruststats):\n' +
-          '/enemy add <SteamID|ссылка|vanity> — добавить\n' +
-          '/enemy list — список\n' +
-          '/enemy stats <SteamID|ссылка|#id> — K/D, время, активность\n' +
-          '/enemy remove <id> — удалить',
-        '🎯 Enemy tracking (by SteamID, like ruststats):\n' +
-          '/enemy add <SteamID|link|vanity> — add\n' +
-          '/enemy list — list\n' +
-          '/enemy stats <SteamID|link|#id> — K/D, time, activity\n' +
-          '/enemy remove <id> — remove',
+        '🎯 Враги:\n' +
+          '/enemy nick «ник» — следить по нику на твоём сервере\n' +
+          '/enemy add <SteamID|ссылка|vanity> — следить по Steam\n' +
+          '/enemy list — список и кто онлайн\n' +
+          '/enemy group «название» «id…» — тима врагов: сообщу, когда выйдут все\n' +
+          '/enemy stats <#id|ник|SteamID> — когда играет, лучшее окно для рейда, K/D\n' +
+          '/enemy remove <id> — удалить\n' +
+          '/players — кто сейчас на сервере · /seen «ник» — когда заходил',
+        '🎯 Enemies:\n' +
+          '/enemy nick «name» — track by name on your server\n' +
+          '/enemy add <SteamID|link|vanity> — track via Steam\n' +
+          '/enemy list — list and who is online\n' +
+          '/enemy group «name» «id…» — an enemy team: alert when all are offline\n' +
+          '/enemy stats <#id|name|SteamID> — when they play, best raid window, K/D\n' +
+          '/enemy remove <id> — remove\n' +
+          '/players — who is on the server now · /seen «name» — when they played',
       ),
     );
+  });
+
+  // Who is on the paired server right now (A2S player list), longest stay first.
+  bot.command('players', (ctx) => {
+    const key = serverKeyOf(ctx.from.id);
+    const snap = presence?.snapshot(key);
+    if (!key || !snap?.lastOk) {
+      if (snap?.hidden) return ctx.reply(tl(ctx, '🙈 Этот сервер скрывает список игроков.', '🙈 This server hides its player list.'));
+      return ctx.reply(tl(
+        ctx,
+        'Список игроков пока недоступен: бот ещё не опросил сервер (раз в минуту) или сервер не привязан.',
+        'The player list is not available yet: the bot has not polled the server (once a minute) or no server is paired.',
+      ));
+    }
+    const q = ctx.match?.trim().toLowerCase();
+    const now = Date.now();
+    const list = snap.players
+      .filter((p) => !q || p.name.toLowerCase().includes(q))
+      .sort((a, b) => a.since - b.since);
+    const dur = (ms) => {
+      const m = Math.round(ms / 60000);
+      return m < 60 ? `${m}м` : `${Math.floor(m / 60)}ч ${String(m % 60).padStart(2, '0')}м`;
+    };
+    const head = `👥 <b>${esc(snap.name ?? key)}</b> — ${snap.players.length}${snap.maxPlayers ? `/${snap.maxPlayers}` : ''}`;
+    const rows = list.slice(0, 60).map((p) => `${esc(p.name)} · ${dur(now - p.since)}`);
+    if (list.length > 60) rows.push(tl(ctx, `…и ещё ${list.length - 60}. Фильтр: /players «часть ника»`, `…and ${list.length - 60} more. Filter: /players «part of name»`));
+    if (!rows.length) rows.push(tl(ctx, 'Никого с таким ником.', 'Nobody with that name.'));
+    return ctx.reply(head + '\n' + panel(rows.join('\n')), HTML);
+  });
+
+  // When a nickname was on the paired server (our own A2S log, up to 30 days).
+  bot.command('seen', (ctx) => {
+    const q = ctx.match?.trim();
+    if (!q) return ctx.reply(tl(ctx, 'Использование: /seen «ник или часть ника»', 'Usage: /seen «name or part of it»'));
+    const key = serverKeyOf(ctx.from.id);
+    if (!key) return ctx.reply(tl(ctx, 'Сервер ещё не подключён к сбору списка игроков.', 'The server is not connected to player-list tracking yet.'));
+    const found = presence.search(key, q, 8);
+    if (!found.length) return ctx.reply(tl(ctx, `«${q}» на сервере не видели (история хранится 30 дней).`, `"${q}" has not been seen on the server (history is kept for 30 days).`));
+    const now = Date.now();
+    const ago = (t) => {
+      const m = Math.round((now - t) / 60000);
+      return m < 2 ? tl(ctx, 'сейчас', 'now') : m < 60 ? tl(ctx, `${m} мин назад`, `${m} min ago`) : m < 1440 ? tl(ctx, `${Math.round(m / 60)} ч назад`, `${Math.round(m / 60)} h ago`) : tl(ctx, `${Math.round(m / 1440)} дн назад`, `${Math.round(m / 1440)} d ago`);
+    };
+    const rows = found.map((f) => {
+      const on = presence.isOnline(key, f.name);
+      return `${on ? '🟢' : '⚪'} ${esc(f.name)} · ${on ? tl(ctx, 'на сервере', 'online') : ago(f.seen)} · ${tl(ctx, 'заходов', 'stays')}: ${f.stays}`;
+    });
+    const hint = tl(ctx, 'Подробнее: /enemy stats «ник» · следить: /enemy nick «ник»', 'Details: /enemy stats «name» · track: /enemy nick «name»');
+    return ctx.reply(panel(rows.join('\n')) + '\n' + hint, HTML);
   });
 
   // Quick trust/ban check by SteamID (smurf/cheat heuristic).

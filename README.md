@@ -22,7 +22,7 @@ A Node.js Telegram bot that extends the official Rust+ Companion app. It keeps a
 * **Server:** `/status`, `/time`, `/subscribe` (notification toggles), `/sub`, `/mirror on|off` (copy alerts to team chat), `/say`, `/promote`, `/teamstats`
 * **Map and recon:** `/map` (team, oil rigs, recent deaths, in-game map notes, your pins), `/rustmap` (RustMaps link), `/whereis` (monument grid), `/pin`, `/deaths`, `/cam`, `/cams`
 * **Raid and RustLabs:** `/raid`, `/durability`, `/craft`, `/recycle`, `/decay`
-* **Players:** `/enemy add|stats|list|remove` (dossier via BattleMetrics and Steam), `/check` (VAC/smurf check), `/track`, `/online`
+* **Players:** `/players` (who is on your server now), `/seen` (when a name played, 30 days), `/enemy nick|add|list|stats|group|remove` (enemy tracking, see below), `/check` (VAC/smurf check), `/track`, `/online`
 * **Base (smart home):** `/devices`, `/switch`, `/storage`, `/find` (item search across all Storage Monitors), `/recyclebox` (what recycling a container's contents yields; `!rbox` in game), `/boxwatch` (alert with what was put in / taken out of a watched Storage Monitor, summarised 30 s after changes settle), `/allon`, `/alloff`, `/scene`, `/scenes`, `/onraid` (scene applied when a Smart Alarm fires), `/auto` (automations, see below)
 * **Journal:** `/note`, `/notes`, `/delnote`, `/pins`, `/unpin`, `/stats`
 * **Subscription and pairing:** `/buy`, `/redeem`, `/pair`, `/rebind`, `/repair`, `/family`, `/join`, `/leave`, `/paysupport`
@@ -44,8 +44,14 @@ Rules that drive smart switches on their own. A target is a switch id from `/dev
 
 `off` inverts a rule (OFF instead of ON). New rules are applied to the current state right away, and every rule is re-synced after a reconnect. Night/offline/online actions send an "Automations" notification (toggle in `/subscribe`); timer cycles stay silent. Up to 20 rules per owner.
 
+### Enemy tracking without BattleMetrics
+BattleMetrics closed its API to non-paying users (Nov 2026), so the bot keeps its own log. Every minute it reads the A2S player list (names and time connected; official Facepunch servers publish it) of each server a subscriber is paired to and stores who was online when in `server_presence` (30 days). The query port is found by probing next to the Rust+ port and cached in `rust_sessions.query_port`. No API key needed. History starts when the bot first sees a server, and servers that hide their player list are skipped.
+* `/enemy nick «name»`: track by in-game name; `/enemy add «SteamID»`: track via Steam (matched on the server by Steam name, plus Steam "in Rust" status on any server)
+* `/enemy group «group» «id…»`: an enemy team; "the whole group went offline" alert when every member has left
+* `/enemy stats`: activity heatmap and best raid window from the server log (BattleMetrics is still used if `BATTLEMETRICS_TOKEN` is a paid token)
+
 ### Notifications
-Team join/leave/death/respawn/AFK, Smart Alarm (raid alarm), automations, upkeep running out, friends and enemies online, wipe, server down/up, day/night and "night soon".
+Team join/leave/death/respawn/AFK, Smart Alarm (raid alarm), automations, upkeep running out, friends and enemies online, whole enemy group offline, wipe, server down/up, day/night and "night soon".
 
 ---
 
@@ -66,7 +72,7 @@ Team join/leave/death/respawn/AFK, Smart Alarm (raid alarm), automations, upkeep
     * `ingameCommands.js`: `!` commands in team chat
     * `maprender.js`: tactical map PNG
   * `devices/`: paired smart devices, scenes, automation rules and the engine that applies them
-  * `enemy/`: BattleMetrics, A2S and Steam lookups, enemy store and analytics
+  * `enemy/`: A2S server queries and the player-list log (`presence.js`), Steam lookups, optional BattleMetrics, enemy store and analytics
   * `features/`: cameras, journal (notes, pins), storage search
   * `telegram/`: bot commands, notifier, formatters, `/help`, i18n (RU/EN)
   * `tracking/steam.js`: Steam friend online tracking
