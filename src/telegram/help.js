@@ -31,6 +31,7 @@ const CATS = [
   { icon: '🎯', ru: 'Игроки', en: 'Players', cmds: [
     ['/players · /seen «ник»', 'кто сейчас на сервере · когда заходил ник _(30 дней)_', 'who is on the server now · when a name played _(30 days)_'],
     ['/enemy nick «ник» · /enemy add «SteamID»', 'следить за врагом: вход/выход, когда играет, окно для рейда', 'track an enemy: join/leave, when they play, raid window'],
+    ['/enemy team «ник» [add]', 'найти тиммейтов врага по заходам на сервер _(add — следить за всей тимой)_', 'find an enemy\'s teammates from server joins _(add — track the whole team)_'],
     ['/enemy list|stats|group|remove', 'список, досье, тима врагов _(сообщу, когда выйдут все)_', 'list, dossier, enemy team _(alert when all are offline)_'],
     ['/check «SteamID|ссылка»', 'VAC / смурф-чек', 'VAC / smurf check'],
     ['/track «steamId» «имя» · /online', 'друзья + живой статус (🎮 в Rust/🟢/⚪)', 'friends + live status (🎮 in Rust/🟢/⚪)'],
@@ -50,6 +51,7 @@ const CATS = [
     ['/stats', 'события сессии', 'session events'],
   ] },
   { icon: '🔑', ru: 'Подписка и привязка', en: 'Subscription & pairing', cmds: [
+    ['/trial', 'пробный период _(один раз)_', 'free trial _(once)_'],
     ['/buy', 'купить или продлить подписку за ⭐ Stars', 'buy or extend the subscription with ⭐ Stars'],
     ['/redeem «ключ» · /pair · /rebind · /repair', 'доступ и привязка _(только владелец)_', 'access & pairing _(owner only)_'],
     ['/family · /join «код» · /leave', 'семья: владелец + до 4 наблюдателей в TG', 'family: owner + up to 4 TG viewers'],

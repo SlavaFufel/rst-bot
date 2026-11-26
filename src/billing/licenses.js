@@ -32,7 +32,7 @@ const revokeStmt = db.prepare("UPDATE licenses SET status = 'revoked' WHERE key 
 const bindStmt = db.prepare('UPDATE licenses SET account_player_id = ? WHERE key = ?');
 const rebindStmt = db.prepare("UPDATE licenses SET account_player_id = NULL WHERE redeemed_by = ? AND status = 'active'");
 const expireDueStmt = db.prepare(`
-  SELECT key, redeemed_by FROM licenses
+  SELECT key, plan, redeemed_by FROM licenses
   WHERE status = 'active' AND expires_at IS NOT NULL AND expires_at < ?
 `);
 const markExpiredStmt = db.prepare("UPDATE licenses SET status = 'expired' WHERE key = ?");
@@ -91,6 +91,16 @@ export function checkAndBind(telegramId, playerId, { isAdmin = false } = {}) {
   const lic = activeLicenseByUser(telegramId);
   if (!lic) return { allowed: false, reason: 'Нет активной подписки. /buy или /redeem <ключ>', reasonEn: 'No active subscription. /buy or /redeem <key>' };
   if (lic.account_player_id == null) {
+    if (lic.plan === 'trial') {
+      if (trialAccountUsedStmt.get(String(playerId), telegramId)) {
+        return {
+          allowed: false,
+          reason: 'Пробный период для этого Rust-аккаунта уже использован. Оформи подписку: /buy',
+          reasonEn: 'The trial was already used for this Rust account. Get a subscription: /buy',
+        };
+      }
+      trialAccountStmt.run(String(playerId), telegramId, Date.now());
+    }
     bindAccount(lic.key, playerId);
     return { allowed: true };
   }
@@ -110,18 +120,21 @@ export function listKeys() {
 }
 
 const extendStmt = db.prepare('UPDATE licenses SET expires_at = ? WHERE key = ?');
+const setPlanStmt = db.prepare('UPDATE licenses SET plan = ? WHERE key = ?');
 const renewDueStmt = db.prepare(`
-  SELECT key, redeemed_by, expires_at FROM licenses
-  WHERE status = 'active' AND expires_at IS NOT NULL AND expires_at BETWEEN ? AND ?
+  SELECT key, plan, redeemed_by, expires_at FROM licenses
+  WHERE status = 'active' AND expires_at IS NOT NULL AND expires_at >= ?
+    AND expires_at <= CASE WHEN plan = 'trial' THEN ? ELSE ? END
     AND (renew_warned_for IS NULL OR renew_warned_for != expires_at)
 `);
 const markWarnedStmt = db.prepare('UPDATE licenses SET renew_warned_for = expires_at WHERE key = ?');
 
-// Active subscriptions ending within `withinMs` that haven't been reminded for
-// their current expiry yet. Marks them reminded. Returns [{ redeemed_by, expires_at }].
-export function renewDue(withinMs) {
+// Active subscriptions ending within `withinMs` (`trialWithinMs` for trials) that
+// haven't been reminded for their current expiry yet. Marks them reminded.
+// Returns [{ plan, redeemed_by, expires_at }].
+export function renewDue(withinMs, trialWithinMs = withinMs) {
   const now = Date.now();
-  const due = renewDueStmt.all(now, now + withinMs);
+  const due = renewDueStmt.all(now, now + trialWithinMs, now + withinMs);
   for (const row of due) markWarnedStmt.run(row.key);
   return due;
 }
@@ -134,6 +147,7 @@ export function grantDays(telegramId, days, name, plan = 'stars') {
   if (lic && lic.expires_at == null) return null;
   if (lic) {
     extendStmt.run(lic.expires_at + days * DAY_MS, lic.key);
+    if (lic.plan === 'trial') setPlanStmt.run(plan, lic.key); // paid now: no longer a trial
     return getStmt.get(lic.key);
   }
   return redeem(genKey({ plan, durationDays: days }), telegramId, name).license;
@@ -144,4 +158,25 @@ export function revokeDays(telegramId, days) {
   const lic = activeLicenseByUser(telegramId);
   if (!lic || lic.expires_at == null) return;
   extendStmt.run(Math.max(Date.now(), lic.expires_at - days * DAY_MS), lic.key);
+}
+
+// --- Free trial: once per Telegram account and once per Rust account ---
+const trialUsedStmt = db.prepare('SELECT 1 FROM trials WHERE telegram_id = ?');
+const anyLicenseStmt = db.prepare('SELECT 1 FROM licenses WHERE redeemed_by = ? LIMIT 1');
+const trialInsertStmt = db.prepare('INSERT INTO trials (telegram_id, key, created_at) VALUES (?, ?, ?)');
+const trialAccountStmt = db.prepare('INSERT OR IGNORE INTO trial_accounts (player_id, telegram_id, created_at) VALUES (?, ?, ?)');
+const trialAccountUsedStmt = db.prepare('SELECT 1 FROM trial_accounts WHERE player_id = ? AND telegram_id != ?');
+
+// A trial is offered to users who never had a trial or any subscription.
+export function trialAvailable(telegramId, days) {
+  return days > 0 && !trialUsedStmt.get(telegramId) && !anyLicenseStmt.get(telegramId);
+}
+
+// Starts a `days`-long trial. Returns the license, or null if not available.
+export function startTrial(telegramId, days, name) {
+  if (!trialAvailable(telegramId, days)) return null;
+  const key = genKey({ plan: 'trial', durationDays: days });
+  const res = redeem(key, telegramId, name);
+  trialInsertStmt.run(telegramId, key, Date.now());
+  return res.license;
 }

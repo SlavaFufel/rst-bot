@@ -58,7 +58,12 @@ export const config = Object.freeze({
   // Subscription plans sold for Telegram Stars via /buy ("days:stars,..."),
   // or STARS_PLANS=off to hide /buy.
   stars: {
-    plans: optional('STARS_PLANS', '30:300,90:800') === 'off' ? [] : parsePlans(optional('STARS_PLANS', '30:300,90:800')),
+    plans: optional('STARS_PLANS', '7:50,30:110,90:280') === 'off' ? [] : parsePlans(optional('STARS_PLANS', '7:50,30:110,90:280')),
+  },
+  // Free trial length in days (/trial), once per Telegram and per Rust account.
+  // TRIAL_DAYS=0 or off disables it.
+  trial: {
+    days: optional('TRIAL_DAYS', '3') === 'off' ? 0 : Math.max(0, Number(optional('TRIAL_DAYS', '3')) || 0),
   },
   battlemetrics: {
     token: optional('BATTLEMETRICS_TOKEN'),

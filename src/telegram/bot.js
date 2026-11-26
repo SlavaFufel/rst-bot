@@ -5,7 +5,7 @@ import { db } from '../store/db.js';
 import { SUBSCRIBABLE } from '../core/eventbus.js';
 import { createGate } from '../access/gate.js';
 import { isAdmin, displayName, mirrorEnabled, setMirror, getLang, setLang, getUser, ensureUser, langOf } from '../access/users.js';
-import { genKey, redeem, revoke, rebind, activeLicenseByUser, listKeys, grantDays, revokeDays } from '../billing/licenses.js';
+import { genKey, redeem, revoke, rebind, activeLicenseByUser, listKeys, grantDays, revokeDays, trialAvailable, startTrial } from '../billing/licenses.js';
 import { plans as starPlans, invoicePayload, planFromPayload, recordPayment, getPayment, markRefunded, recentPayments } from '../billing/payments.js';
 import { issueCode } from '../pair/codes.js';
 import {
@@ -17,6 +17,7 @@ import { craftInfo, recycleInfo, decayInfo, durabilityInfo, fmtDuration } from '
 import { addNote, listNotes, deleteNote, addPin, listPins, deletePin, sessionStats } from '../features/journal.js';
 import { quickMatchSteamId, fetchSessions, playerServers } from '../enemy/battlemetrics.js';
 import { renderProfile } from '../enemy/analytics.js';
+import { findTeammates } from '../enemy/teamfinder.js';
 import { addEnemy, listEnemies, removeEnemy, findEnemy, getEnemy, getEnemySessions, setEnemyGroup } from '../enemy/store.js';
 import { resolveBmServerId } from '../enemy/resolve.js';
 import { resolveSteamId, getSummary, getSummaries, getRustStats, getPlaytimeMinutes, renderSteamProfile, getBans, renderTrust } from '../enemy/steamstats.js';
@@ -71,9 +72,26 @@ const langKeyboard = () => {
 const sendLangPicker = (ctx) =>
   ctx.reply(`${t('ru', 'pick_prompt')}\n${t('en', 'pick_prompt')}`, { reply_markup: langKeyboard() });
 
+// Russian plural for "day": 1 день, 3 дня, 5 дней.
+const dniRu = (n) => {
+  const a = n % 10;
+  const b = n % 100;
+  if (a === 1 && b !== 11) return 'день';
+  if (a >= 2 && a <= 4 && (b < 10 || b >= 20)) return 'дня';
+  return 'дней';
+};
+// Human name of a license plan for /sub.
+const PLAN_NAMES = {
+  trial: ['пробный период 🎁', 'trial 🎁'],
+  stars: ['подписка ⭐', 'subscription ⭐'],
+  standard: ['ключ', 'key'],
+};
+const planName = (plan, lang) => PLAN_NAMES[plan]?.[lang === 'ru' ? 0 : 1] ?? plan;
+
 // Localised welcome screen (HTML).
 const startText = (lang) =>
   `🤖 <b>${t(lang, 'start_title')}</b>\n${t(lang, 'start_tagline')}\n\n` +
+  (config.trial.days ? `🎁 ${L(lang, `${config.trial.days} ${dniRu(config.trial.days)} бесплатно, без оплаты:`, `${config.trial.days} days free, no payment:`)} /trial\n` : '') +
   (starPlans().length ? `💳 ${t(lang, 'start_buy')} /buy\n` : '') +
   `▶️ ${t(lang, 'start_redeem')} /redeem «key»\n` +
   `📋 ${t(lang, 'start_help')} /help\n\n` +
@@ -166,11 +184,46 @@ export function createBot({ sessions, enemies }) {
     const lic = activeLicenseByUser(ctx.from.id);
     if (lic && lic.expires_at == null) return ctx.reply(tl(ctx, '✅ У тебя бессрочная подписка — продлевать не нужно.', '✅ You have a lifetime subscription — nothing to renew.'));
     const kb = new InlineKeyboard();
+    if (trialAvailable(ctx.from.id, config.trial.days)) {
+      kb.text(tl(ctx, `🎁 ${config.trial.days} ${dniRu(config.trial.days)} бесплатно`, `🎁 ${config.trial.days} days free`), 'buy:trial').row();
+    }
     for (const p of list) kb.text(planLabel(ctx, p), `buy:${p.days}`).row();
     const head = lic
       ? tl(ctx, `Подписка активна до ${formatExpiry(lic.expires_at, 'ru')}. Купленные дни добавятся к ней.`, `Subscription active until ${formatExpiry(lic.expires_at, 'en')}. Bought days are added on top.`)
       : tl(ctx, 'Выбери срок подписки. Оплата — Telegram Stars прямо в чате.', 'Pick a subscription length. Pay with Telegram Stars right in the chat.');
-    return ctx.reply(`💳 ${head}`, { reply_markup: kb });
+    const family = tl(ctx, '👥 Одна подписка — на всю тиму: ты + до 4 тиммейтов в Telegram (/family).', '👥 One subscription covers your team: you + up to 4 teammates in Telegram (/family).');
+    return ctx.reply(`💳 ${head}\n${family}`, { reply_markup: kb });
+  });
+
+  // Free trial: same access as a paid subscription for config.trial.days.
+  const trial = async (ctx) => {
+    const days = config.trial.days;
+    if (!days) return ctx.reply(tl(ctx, 'Пробного периода сейчас нет. Подписка: /buy', 'There is no trial right now. Subscription: /buy'));
+    const lic = startTrial(ctx.from.id, days, displayName(ctx));
+    if (!lic) {
+      return ctx.reply(tl(
+        ctx,
+        'Пробный период доступен один раз и только тем, у кого ещё не было подписки. Оформить: /buy',
+        'The trial is available once, and only if you never had a subscription. Subscribe: /buy',
+      ));
+    }
+    log.info(`Trial started: ${ctx.from.id} (${days}d)`);
+    if (config.telegram.adminId && config.telegram.adminId !== ctx.from.id) {
+      bot.api.sendMessage(config.telegram.adminId, `🎁 Trial: ${displayName(ctx)} (${ctx.from.id}), ${days} дн.`).catch(() => {});
+    }
+    sessions.resume(ctx.from.id);
+    return ctx.reply(tl(
+      ctx,
+      `🎁 Пробный период активен до ${formatExpiry(lic.expires_at, 'ru')} — всё как в платной подписке.\n` +
+        'Дальше: /pair — привязать Rust+, затем зайди на сервер и нажми «Pair with Server».',
+      `🎁 Trial active until ${formatExpiry(lic.expires_at, 'en')} — everything a paid subscription has.\n` +
+        'Next: /pair — pair Rust+, then join the server and press "Pair with Server".',
+    ));
+  };
+  bot.command('trial', trial);
+  bot.callbackQuery('buy:trial', async (ctx) => {
+    await ctx.answerCallbackQuery();
+    return trial(ctx);
   });
 
   bot.callbackQuery(/^buy:(\d+)$/, async (ctx) => {
@@ -274,13 +327,13 @@ export function createBot({ sessions, enemies }) {
         ctx,
         `🔑 <b>Моя подписка</b>\n` +
           panel(
-            `📜 План: <b>${esc(lic.plan)}</b>\n` +
+            `📜 План: <b>${esc(planName(lic.plan, 'ru'))}</b>\n` +
               `📅 До: <b>${esc(formatExpiry(lic.expires_at, 'ru'))}</b> · осталось ${left}\n` +
               `🎮 Аккаунт: ${account}`,
           ),
         `🔑 <b>My subscription</b>\n` +
           panel(
-            `📜 Plan: <b>${esc(lic.plan)}</b>\n` +
+            `📜 Plan: <b>${esc(planName(lic.plan, 'en'))}</b>\n` +
               `📅 Until: <b>${esc(formatExpiry(lic.expires_at, 'en'))}</b> · ${left} left\n` +
               `🎮 Account: ${account}`,
           ),
@@ -693,6 +746,70 @@ export function createBot({ sessions, enemies }) {
         : tl(ctx, `Убраны из групп: #${done.join(', #')}`, `Removed from groups: #${done.join(', #')}`));
     }
 
+    if (sub === 'team') {
+      const wantAdd = args[args.length - 1]?.toLowerCase() === 'add';
+      if (wantAdd) args.pop();
+      const q = args.join(' ');
+      if (!q) {
+        return ctx.reply(tl(
+          ctx,
+          'Кто играет вместе с игроком — по тому, как они заходят и выходят на твоём сервере.\n/enemy team «#id | ник» — показать тиммейтов\n/enemy team «#id | ник» add — следить за всей тимой (группа + уведомление, когда выйдут все)',
+          'Who plays with a player, from how they join and leave your server.\n/enemy team «#id | name» — show teammates\n/enemy team «#id | name» add — track the whole team (a group + alert when all are offline)',
+        ));
+      }
+      const key = serverKeyOf(ctx.from.id);
+      if (!key) return ctx.reply(tl(ctx, 'Сервер ещё не подключён к сбору списка игроков.', 'The server is not connected to player-list tracking yet.'));
+      const id0 = Number(q.replace(/^#/, ''));
+      const tracked = (id0 ? getEnemy(id0, ctx.from.id) : null) || findEnemy(ctx.from.id, q);
+      const nick = tracked ? tracked.nick || enemies?.names.get(tracked.id) || tracked.label : q;
+      const res = findTeammates(key, nick);
+      if (!res) return ctx.reply(tl(ctx, `«${nick}» на сервере не видели. Поиск ника: /seen «часть ника»`, `"${nick}" has not been seen on the server. Search names: /seen «part of name»`));
+
+      const { target, mates } = res;
+      const hours = (m) => (m < 60 ? `${m} мин` : `${(m / 60).toFixed(1)} ч`);
+      const hoursEn = (m) => (m < 60 ? `${m} min` : `${(m / 60).toFixed(1)} h`);
+      const lines = [tl(
+        ctx,
+        `👥 Тима игрока «${target.name}» (за 14 дней: ${target.stays} заход., ${hours(target.minutes)})`,
+        `👥 "${target.name}"'s team (14 days: ${target.stays} stays, ${hoursEn(target.minutes)})`,
+      )];
+      for (const m of mates) {
+        const pct = Math.round(m.share * 100);
+        lines.push(`${m.level === 'high' ? '🟥' : '🟧'} ${m.name} — ` + tl(
+          ctx,
+          `заходили вместе ${m.joins}, выходили ${m.leaves}, вместе ${pct}% времени`,
+          `joined together ${m.joins}, left ${m.leaves}, together ${pct}% of the time`,
+        ));
+      }
+      if (!mates.length) {
+        lines.push(res.enough
+          ? tl(ctx, 'Постоянных напарников не видно — похоже, играет один.', 'No regular partners — looks like a solo player.')
+          : tl(ctx, 'Пока мало данных: нужно ещё несколько заходов. Загляни через день-два.', 'Not enough data yet: a few more sessions are needed. Check back in a day or two.'));
+        return ctx.reply(lines.join('\n'));
+      }
+      lines.push(res.enough
+        ? tl(ctx, '🟥 почти наверняка · 🟧 вероятно', '🟥 almost certain · 🟧 likely')
+        : tl(ctx, '⚠️ Данных пока мало, результат может поменяться.', '⚠️ Little data so far, this may change.'));
+
+      if (!wantAdd) {
+        lines.push(tl(ctx, `Следить за всей тимой: /enemy team ${q} add`, `Track the whole team: /enemy team ${q} add`));
+        return ctx.reply(lines.join('\n'));
+      }
+
+      // Track the target and every teammate as one group.
+      const owner = ctx.from.id;
+      const group = (tracked?.grp || target.name).replace(/\s+/g, '_').slice(0, 32);
+      const ensure = (name) => findEnemy(owner, name)?.id ?? addEnemy(owner, { label: name, nick: name });
+      const ids = [tracked?.id ?? ensure(target.name), ...mates.map((m) => ensure(m.name))];
+      for (const id of ids) setEnemyGroup(id, owner, group);
+      lines.push('', tl(
+        ctx,
+        `✅ Группа «${group}», игроков в ней: ${ids.length}. Сообщу, когда зайдут и когда выйдет вся тима. Список: /enemy list`,
+        `✅ Group "${group}", players in it: ${ids.length}. I'll tell you when they join and when the whole team is offline. List: /enemy list`,
+      ));
+      return ctx.reply(lines.join('\n'));
+    }
+
     if (sub === 'list') {
       const list = listEnemies(ctx.from.id);
       if (!list.length) return ctx.reply(tl(ctx, 'Список врагов пуст. /enemy add <SteamID|ссылка> или /enemy nick «ник»', 'Enemy list is empty. /enemy add <SteamID|link> or /enemy nick «name»'));
@@ -837,6 +954,7 @@ export function createBot({ sessions, enemies }) {
           '/enemy nick «ник» — следить по нику на твоём сервере\n' +
           '/enemy add <SteamID|ссылка|vanity> — следить по Steam\n' +
           '/enemy list — список и кто онлайн\n' +
+          '/enemy team «#id|ник» [add] — найти тиммейтов врага (и следить за всеми)\n' +
           '/enemy group «название» «id…» — тима врагов: сообщу, когда выйдут все\n' +
           '/enemy stats <#id|ник|SteamID> — когда играет, лучшее окно для рейда, K/D\n' +
           '/enemy remove <id> — удалить\n' +
@@ -845,6 +963,7 @@ export function createBot({ sessions, enemies }) {
           '/enemy nick «name» — track by name on your server\n' +
           '/enemy add <SteamID|link|vanity> — track via Steam\n' +
           '/enemy list — list and who is online\n' +
+          '/enemy team «#id|name» [add] — find an enemy\'s teammates (and track them all)\n' +
           '/enemy group «name» «id…» — an enemy team: alert when all are offline\n' +
           '/enemy stats <#id|name|SteamID> — when they play, best raid window, K/D\n' +
           '/enemy remove <id> — remove\n' +

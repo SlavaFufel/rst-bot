@@ -5,7 +5,7 @@ import { ownerForViewer } from '../store/members.js';
 
 // Commands a user without an active subscription may still use. /join is here so
 // a fresh teammate (no license yet) can redeem a family invite code.
-const PUBLIC_COMMAND = /^\/(start|redeem|sub|help|lang|join|buy|paysupport)\b/;
+const PUBLIC_COMMAND = /^\/(start|redeem|sub|help|lang|join|buy|trial|paysupport)\b/;
 
 // Seed the first admin from ADMIN_TELEGRAM_ID (or the first whitelisted id).
 export function seedAdmin() {

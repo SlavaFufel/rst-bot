@@ -138,6 +138,19 @@ CREATE TABLE IF NOT EXISTS licenses (
   created_at        INTEGER NOT NULL
 );
 
+-- Free trial: once per Telegram account (trials) and once per Rust account
+-- (trial_accounts, filled when a trial subscription binds a Steam player id).
+CREATE TABLE IF NOT EXISTS trials (
+  telegram_id INTEGER PRIMARY KEY,
+  key         TEXT NOT NULL,
+  created_at  INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS trial_accounts (
+  player_id   TEXT PRIMARY KEY,
+  telegram_id INTEGER NOT NULL,
+  created_at  INTEGER NOT NULL
+);
+
 -- Single-use codes binding the desktop helper upload to a Telegram account.
 CREATE TABLE IF NOT EXISTS pair_codes (
   code        TEXT PRIMARY KEY,
